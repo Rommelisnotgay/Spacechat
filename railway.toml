@@ -1,6 +1,6 @@
 [build]
-builder = "nixpacks"
-nixpacksConfigPath = "nixpacks.toml"
+builder = "DOCKERFILE"
+buildCommand = "docker build -t spacechat-live ."
 
 [deploy]
 startCommand = "npm run start:prod"
