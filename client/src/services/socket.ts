@@ -3,8 +3,10 @@ import { io, Socket } from 'socket.io-client';
 
 // Determine the API URL based on environment
 const getApiUrl = () => {
-  // For production on Glitch, use relative URL which will use the same host
+  // In production, use the same domain (as the server serves the client)
   if (import.meta.env.PROD) {
+    // When running on Railway, the client is served by the server,
+    // so we use relative URL in production
     return window.location.origin;
   }
   

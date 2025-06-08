@@ -11,19 +11,46 @@ const uuid_1 = require("uuid");
 const signaling_1 = require("./socket/signaling");
 const chat_1 = require("./socket/chat");
 const games_1 = require("./socket/games");
+// Get the allowed origins for CORS
+const getAllowedOrigins = () => {
+    if (process.env.NODE_ENV === 'production') {
+        const origins = [
+            'https://spacechat-live.up.railway.app',
+            'https://spacechat-live.railway.app',
+            'https://spacechat.live'
+        ];
+        if (process.env.CLIENT_URL) {
+            origins.push(process.env.CLIENT_URL);
+        }
+        return origins;
+    }
+    return '*';
+};
 // Initialize Express app
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 const io = new socket_io_1.Server(server, {
     cors: {
-        origin: '*', // In production, replace with specific origins
+        origin: getAllowedOrigins(),
         methods: ['GET', 'POST'],
         credentials: true
     }
 });
 // Middleware
-app.use((0, cors_1.default)());
+app.use((0, cors_1.default)({
+    origin: getAllowedOrigins(),
+    credentials: true
+}));
 app.use(express_1.default.json());
+// Serve static files from the client's dist folder in production
+if (process.env.NODE_ENV === 'production') {
+    const path = require('path');
+    app.use(express_1.default.static(path.join(__dirname, '../../client/dist')));
+    // Handle SPA routing
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
+    });
+}
 const activeUsers = new Map();
 let userQueue = [];
 // Rate limiting for joining queue

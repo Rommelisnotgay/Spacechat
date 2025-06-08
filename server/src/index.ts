@@ -7,20 +7,53 @@ import { setupSignalingEvents } from './socket/signaling';
 import { setupChatEvents } from './socket/chat';
 import { setupGameEvents } from './socket/games';
 
+// Get the allowed origins for CORS
+const getAllowedOrigins = () => {
+  if (process.env.NODE_ENV === 'production') {
+    const origins = [
+      'https://spacechat-live.up.railway.app', 
+      'https://spacechat-live.railway.app', 
+      'https://spacechat.live'
+    ];
+    
+    if (process.env.CLIENT_URL) {
+      origins.push(process.env.CLIENT_URL);
+    }
+    
+    return origins;
+  }
+  
+  return '*';
+};
+
 // Initialize Express app
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: '*', // In production, replace with specific origins
+    origin: getAllowedOrigins(),
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: getAllowedOrigins(),
+  credentials: true
+}));
 app.use(express.json());
+
+// Serve static files from the client's dist folder in production
+if (process.env.NODE_ENV === 'production') {
+  const path = require('path');
+  app.use(express.static(path.join(__dirname, '../../client/dist')));
+  
+  // Handle SPA routing
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
+  });
+}
 
 // Active users map to track users by their IDs
 // Maps userID to socketID and user info

@@ -123,7 +123,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSocket } from '@/services/socket';
 import TicTacToe from './games/TicTacToe.vue';
 
-const { socket } = useSocket();
+const { socket, userId } = useSocket();
 
 const props = defineProps({
   isOpen: {
@@ -169,7 +169,7 @@ const selectGame = (gameType: string) => {
   
   // Create a deterministic room ID based on user IDs
   // This ensures both users try to join the same room
-  const userIds = [socket.value?.data?.userId, props.partnerId].sort();
+  const userIds = [userId.value, props.partnerId].sort();
   gameRoomId.value = `${gameType}-${userIds[0]}-${userIds[1]}`;
   
   logDebugInfo(`Created game room: ${gameRoomId.value}`);

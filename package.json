@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "A real-time audio chat platform connecting random users",
   "engines": {
-    "node": "18.x"
+    "node": "18.x",
+    "npm": ">=9.0.0"
   },
   "scripts": {
     "start": "concurrently \"npm run server\" \"npm run client\"",
