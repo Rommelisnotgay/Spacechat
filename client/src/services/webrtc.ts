@@ -1341,159 +1341,58 @@ export function useWebRTC() {
    * التحقق من حالة المسارات وإصلاح المشاكل المحتملة
    */
   function checkAndFixTracks() {
-    if (!globalPeerConnection || !globalLocalStream) {
-      if (DEBUG) console.log('[WebRTC] No peer connection or local stream to check tracks');
-      return;
+    if (!globalPeerConnection || !globalRemoteStream) {
+      if (DEBUG) console.log('[WebRTC] Cannot fix tracks: missing connection or stream');
+      return false;
     }
     
-    if (DEBUG) console.log('[WebRTC] Checking audio tracks');
+    if (DEBUG) console.log('[WebRTC] Checking and fixing tracks');
     
-    // تحقق من حالة الاتصال
-    if (DEBUG) console.log(`[WebRTC] Connection state: ${globalPeerConnection.connectionState}, ICE state: ${globalPeerConnection.iceConnectionState}`);
-    
-    // التحقق من المسارات المحلية
-    const localAudioTracks = globalLocalStream.getAudioTracks();
-    if (localAudioTracks.length === 0) {
-      if (DEBUG) console.log('[WebRTC] No local audio tracks found, initializing new stream');
+    // التحقق من المرسلين (المسارات المحلية)
+    const senders = globalPeerConnection.getSenders();
+    if (senders.length === 0 && globalLocalStream) {
+      if (DEBUG) console.log('[WebRTC] No senders found, re-adding local tracks');
       
-      // إذا لم تكن هناك مسارات صوتية محلية، نحاول الحصول على تدفق جديد
-      initializeLocalStream().then(stream => {
-        if (globalPeerConnection && globalPeerConnection.connectionState !== 'closed') {
-          // إضافة المسارات إلى الاتصال
-          stream.getAudioTracks().forEach(track => {
-            if (DEBUG) console.log('[WebRTC] Adding new local track to connection');
-            try {
-              globalPeerConnection!.addTrack(track, stream);
-            } catch (e) {
-              // قد يكون السبب أن المسار موجود بالفعل
-              console.warn('[WebRTC] Error adding track, might already exist:', e);
-            }
-          });
-          
-          // بدء تفاوض جديد لتفعيل المسارات
-          if (globalPeerConnection.connectionState === 'connected' && !isNegotiating) {
-            if (DEBUG) console.log('[WebRTC] Starting negotiation for new local tracks');
-            startNegotiation();
+      globalLocalStream.getTracks().forEach((track: MediaStreamTrack) => {
+        globalPeerConnection?.addTrack(track, globalLocalStream!);
+      });
+    } else if (senders.length > 0 && globalLocalStream) {
+      if (DEBUG) console.log(`[WebRTC] Found ${senders.length} senders, checking state`);
+      
+      // التحقق من أن المرسلين يستخدمون المسارات المحلية الحالية
+      const localTracks = globalLocalStream.getTracks();
+      senders.forEach((sender) => {
+        if (sender.track && sender.track.readyState !== 'live') {
+          const matchingLocalTrack = localTracks.find(track => track.kind === sender.track?.kind);
+          if (matchingLocalTrack) {
+            if (DEBUG) console.log(`[WebRTC] Replacing inactive track with active one`);
+            sender.replaceTrack(matchingLocalTrack);
           }
         }
-      }).catch(error => {
-        console.error('[WebRTC] Failed to initialize new stream:', error);
       });
-    } else {
-      // التأكد من أن المسارات المحلية مفعلة
-      let fixedTracks = false;
-      localAudioTracks.forEach(track => {
-        if (!track.enabled) {
-          if (DEBUG) console.log(`[WebRTC] Enabling local track: ${track.label}`);
-          track.enabled = true;
-          fixedTracks = true;
-        }
-        
-        if (track.readyState !== 'live') {
-          if (DEBUG) console.log(`[WebRTC] Local track ${track.label} not live, state: ${track.readyState}`);
-          fixedTracks = true;
-        }
-      });
-      
-      // تحديث الحالة
-      if (localAudioTracks.some(track => !track.enabled)) {
-        globalIsAudioMuted.value = true;
-      } else {
-        globalIsAudioMuted.value = false;
-      }
-      
-      // إذا تم إصلاح المسارات، نحاول بدء تفاوض جديد
-      if (fixedTracks && globalPeerConnection.connectionState === 'connected' && !isNegotiating) {
-        if (DEBUG) console.log('[WebRTC] Fixed local tracks, starting negotiation');
-        startNegotiation();
-      }
     }
     
-    // التحقق من المسارات البعيدة
-    if (globalRemoteStream) {
-      const remoteAudioTracks = globalRemoteStream.getAudioTracks();
+    // التحقق من المستقبلين (المسارات البعيدة)
+    const receivers = globalPeerConnection.getReceivers();
+    if (receivers.length > 0) {
+      if (DEBUG) console.log(`[WebRTC] Found ${receivers.length} receivers`);
       
-      if (remoteAudioTracks.length === 0) {
-        if (DEBUG) console.log('[WebRTC] No remote audio tracks found, checking receivers');
-        
-        // التحقق من المستقبلات
-        const receivers = globalPeerConnection.getReceivers();
-        const audioReceivers = receivers.filter(receiver => 
-          receiver.track && 
-          receiver.track.kind === 'audio' && 
-          receiver.track.readyState === 'live'
-        );
-        
-        if (audioReceivers.length > 0) {
-          if (DEBUG) console.log(`[WebRTC] Found ${audioReceivers.length} audio receivers not in stream, adding tracks`);
-          
-          // إضافة المسارات من المستقبلات إلى التدفق البعيد
-          audioReceivers.forEach(receiver => {
-            if (receiver.track && !globalRemoteStream!.getTracks().includes(receiver.track)) {
-              if (DEBUG) console.log(`[WebRTC] Adding track ${receiver.track.id} to remote stream`);
-              try {
-                globalRemoteStream!.addTrack(receiver.track);
-              } catch (e) {
-                console.warn('[WebRTC] Error adding remote track:', e);
-              }
-            }
-          });
-          
-          // تحديث المكونات بالتدفق الجديد
-          remoteStream.value = globalRemoteStream;
-          if (DEBUG) console.log('[WebRTC] Updated remote stream with receiver tracks');
-        } else if (globalConnectionState.value === 'connected' && !isNegotiating) {
-          // لا توجد مسارات في المستقبلات، نحتاج إلى إعادة التفاوض
-          if (DEBUG) console.log('[WebRTC] No audio receivers found but connected, trying to renegotiate');
-          startNegotiation();
-        }
-      } else {
-        // التأكد من أن المسارات البعيدة مفعلة
-        let fixedRemoteTracks = false;
-        remoteAudioTracks.forEach(track => {
-          if (!track.enabled) {
-            if (DEBUG) console.log(`[WebRTC] Enabling remote track: ${track.label}`);
-            track.enabled = true;
-            fixedRemoteTracks = true;
-          }
-          
-          if (track.readyState !== 'live') {
-            if (DEBUG) console.log(`[WebRTC] Remote track ${track.label} not live, state: ${track.readyState}`);
-            fixedRemoteTracks = true;
-          }
-        });
-        
-        // إذا تم إصلاح المسارات البعيدة، نحدث المكونات
-        if (fixedRemoteTracks) {
-          remoteStream.value = globalRemoteStream;
-          if (DEBUG) console.log('[WebRTC] Updated remote stream after fixing tracks');
-        }
-      }
-    } else if (globalPeerConnection.getReceivers().length > 0) {
-      // إذا كان هناك مستقبلات ولكن لا يوجد تدفق بعيد، إنشاء واحد جديد
-      if (DEBUG) console.log('[WebRTC] No remote stream but receivers exist, creating new stream');
-      
-      globalRemoteStream = new MediaStream();
-      remoteStream.value = globalRemoteStream;
-      
-      // إضافة المسارات من المستقبلات
-      let addedTracks = false;
-      globalPeerConnection.getReceivers().forEach(receiver => {
+      let hasAudioReceiver = false;
+      receivers.forEach((receiver) => {
         if (receiver.track && receiver.track.kind === 'audio') {
-          if (DEBUG) console.log(`[WebRTC] Adding track ${receiver.track.id} from receiver to new remote stream`);
-          try {
-            globalRemoteStream!.addTrack(receiver.track);
-            addedTracks = true;
-          } catch (e) {
-            console.warn('[WebRTC] Error adding track from receiver:', e);
+          hasAudioReceiver = true;
+          
+          // التأكد من أن المسار موجود في التدفق البعيد
+          const trackInStream = globalRemoteStream?.getTracks().some(t => t.id === receiver.track?.id);
+          if (!trackInStream && globalRemoteStream) {
+            if (DEBUG) console.log('[WebRTC] Adding missing track to remote stream');
+            globalRemoteStream.addTrack(receiver.track);
           }
         }
       });
       
-      // تحديث المكونات بالتدفق الجديد إذا تم إضافة مسارات
-      if (addedTracks) {
-        remoteStream.value = globalRemoteStream;
-        if (DEBUG) console.log('[WebRTC] Updated components with new remote stream');
+      if (!hasAudioReceiver) {
+        if (DEBUG) console.log('[WebRTC] No audio receivers found!');
       }
     }
     
@@ -1502,6 +1401,102 @@ export function useWebRTC() {
     
     // فحص وإصلاح مشاكل الاتصال الصوتي
     diagnoseAndFixAudioIssues();
+  }
+  
+  /**
+   * فحص وإصلاح مشاكل الاتصال الصوتي
+   * تستخدم هذه الوظيفة للتحقق من مسارات الصوت وإصلاح المشاكل الشائعة
+   */
+  function diagnoseAndFixAudioIssues() {
+    if (DEBUG) console.log('[WebRTC] 🔍 Diagnosing audio connection issues');
+    
+    // فحص حالة الاتصال
+    if (!globalPeerConnection) {
+      if (DEBUG) console.log('[WebRTC] 🔴 No peer connection exists');
+      return false;
+    }
+    
+    if (DEBUG) {
+      console.log(`[WebRTC] Connection state: ${globalPeerConnection.connectionState}`);
+      console.log(`[WebRTC] ICE connection state: ${globalPeerConnection.iceConnectionState}`);
+      console.log(`[WebRTC] Signaling state: ${globalPeerConnection.signalingState}`);
+    }
+    
+    // فحص مسارات الصوت المستلمة
+    const receivers = globalPeerConnection.getReceivers();
+    if (DEBUG) console.log(`[WebRTC] Connection has ${receivers.length} receivers`);
+    
+    let foundAudioReceiver = false;
+    receivers.forEach((receiver, i) => {
+      const track = receiver.track;
+      if (track && track.kind === 'audio') {
+        foundAudioReceiver = true;
+        if (DEBUG) console.log(`[WebRTC] Audio receiver ${i} - Track: ${track.label}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+        
+        // محاولة إصلاح المسارات المعطلة
+        if (!track.enabled) {
+          if (DEBUG) console.log('[WebRTC] 🟠 Found disabled audio track, enabling it');
+          track.enabled = true;
+        }
+      }
+    });
+    
+    if (!foundAudioReceiver && DEBUG) {
+      console.log('[WebRTC] 🔴 No audio receivers found. Remote party may not be sending audio.');
+    }
+    
+    // فحص مسارات الصوت المحلية
+    if (globalLocalStream) {
+      const localAudioTracks = globalLocalStream.getAudioTracks();
+      if (DEBUG) console.log(`[WebRTC] Local stream has ${localAudioTracks.length} audio tracks`);
+      
+      localAudioTracks.forEach((track, i) => {
+        if (DEBUG) console.log(`[WebRTC] Local audio track ${i}: ${track.label}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+      });
+    } else if (DEBUG) {
+      console.log('[WebRTC] 🔴 No local stream available');
+    }
+    
+    // فحص مسارات الصوت البعيدة
+    if (globalRemoteStream) {
+      const remoteAudioTracks = globalRemoteStream.getAudioTracks();
+      if (DEBUG) console.log(`[WebRTC] Remote stream has ${remoteAudioTracks.length} audio tracks`);
+      
+      remoteAudioTracks.forEach((track, i) => {
+        if (DEBUG) console.log(`[WebRTC] Remote audio track ${i}: ${track.label}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+        
+        // محاولة إصلاح المسارات المعطلة
+        if (!track.enabled) {
+          if (DEBUG) console.log('[WebRTC] 🟠 Found disabled remote audio track, enabling it');
+          track.enabled = true;
+        }
+      });
+      
+      if (remoteAudioTracks.length === 0 && DEBUG) {
+        console.log('[WebRTC] 🔴 No audio tracks in remote stream. Trying to check transceivers...');
+        
+        // Check the transceiver's direction
+        const transceivers = globalPeerConnection.getTransceivers();
+        transceivers.forEach((transceiver, i) => {
+          if (DEBUG) console.log(`[WebRTC] Transceiver ${i} direction: ${transceiver.direction}`);
+          
+          // If it's not set to receive audio, try to fix that
+          if (transceiver.direction === 'sendonly' || transceiver.direction === 'inactive') {
+            if (DEBUG) console.log('[WebRTC] 🟠 Transceiver not set to receive, updating direction');
+            try {
+              transceiver.direction = 'sendrecv';
+              if (DEBUG) console.log('[WebRTC] Updated transceiver direction to sendrecv');
+            } catch (error) {
+              console.error('[WebRTC] Failed to update transceiver direction:', error);
+            }
+          }
+        });
+      }
+    } else if (DEBUG) {
+      console.log('[WebRTC] 🔴 No remote stream available');
+    }
+    
+    return true;
   }
   
   // استعادة الاتصال بعد انقطاع
