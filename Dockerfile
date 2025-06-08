@@ -16,8 +16,16 @@ COPY . .
 # Build the application
 RUN npm run build
 
+# Verify files exist after build
+RUN ls -la client/dist/
+RUN ls -la server/dist/
+
+# Set environment variable
+ENV NODE_ENV=production
+ENV PORT=8080
+
 # Expose the port
-EXPOSE 3000
+EXPOSE 8080
 
 # Start the application
 CMD ["npm", "run", "start:prod"] 

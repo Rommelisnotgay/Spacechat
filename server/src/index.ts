@@ -44,21 +44,22 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Define API routes before static file handling
+app.get('/api/stats', (req, res) => {
+  res.json({
+    online: activeUsers.size,
+    inQueue: userQueue.length
+  });
+});
+
 // Serve static files from the client's dist folder in production
 if (process.env.NODE_ENV === 'production') {
   const path = require('path');
   app.use(express.static(path.join(__dirname, '../../client/dist')));
   
-  // API routes
+  // API routes that should work in production
   app.get('/api/status', (req: Request, res: Response) => {
     res.send('SpaceChat.live Server is running');
-  });
-  
-  app.get('/api/stats', (req, res) => {
-    res.json({
-      online: activeUsers.size,
-      inQueue: userQueue.length
-    });
   });
   
   // Handle SPA routing - must be after API routes
@@ -66,16 +67,9 @@ if (process.env.NODE_ENV === 'production') {
     res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
   });
 } else {
-  // Routes for development
+  // Routes for development only
   app.get('/', (req: Request, res: Response) => {
     res.send('SpaceChat.live Server is running');
-  });
-  
-  app.get('/api/stats', (req, res) => {
-    res.json({
-      online: activeUsers.size,
-      inQueue: userQueue.length
-    });
   });
 }
 
