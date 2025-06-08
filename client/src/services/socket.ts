@@ -49,8 +49,17 @@ export function useSocket() {
       reconnectionAttempts: Infinity, // Try to reconnect forever
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000, // Max delay between reconnections
-      timeout: 20000, // Increased timeout
-      transports: ['websocket', 'polling'] // Prefer WebSocket but fallback to polling
+      timeout: 30000, // Increased timeout to 30 seconds
+      transports: ['websocket', 'polling'], // Prefer WebSocket but fallback to polling
+      extraHeaders: {
+        'X-Client-Version': '1.0.0', // Helps identify client versions for debugging
+      },
+      // Path settings - uncomment if needed for specific server setup
+      // path: '/socket.io/',
+      forceNew: false, // Reuse existing connection if possible
+      rememberUpgrade: true, // Remember websocket connection between page refreshes
+      // Added to enhance connection behind proxies and firewalls
+      withCredentials: true
     });
 
     setupSocketListeners();

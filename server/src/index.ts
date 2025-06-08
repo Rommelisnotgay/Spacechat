@@ -13,16 +13,23 @@ const getAllowedOrigins = () => {
     const origins = [
       'https://spacechat-live.up.railway.app', 
       'https://spacechat-live.railway.app', 
-      'https://spacechat.live'
+      'https://spacechat.live',
+      'https://www.spacechat.live'
     ];
     
     if (process.env.CLIENT_URL) {
       origins.push(process.env.CLIENT_URL);
     }
+
+    // Add common vercel deployment URLs
+    if (process.env.VERCEL_URL) {
+      origins.push(`https://${process.env.VERCEL_URL}`);
+    }
     
     return origins;
   }
   
+  // For development, allow all origins
   return '*';
 };
 

@@ -1,6 +1,12 @@
 import { ref, onUnmounted, shallowRef, watch, computed } from 'vue';
 import { useSocket } from './socket';
 import { Socket } from 'socket.io-client';
+import { 
+  standardRtcConfiguration, 
+  fastRtcConfiguration, 
+  turnOnlyRtcConfiguration, 
+  localRtcConfiguration
+} from './rtc-configurations';
 
 interface ConnectionPreferences {
   vibe?: string;
@@ -8,44 +14,9 @@ interface ConnectionPreferences {
   preferSameLanguage?: boolean;
 }
 
-// Create a more complete configuration with TURN servers for better compatibility
-const rtcConfiguration: RTCConfiguration = {
-  iceServers: [
-    // TURN servers first for better NAT traversal
-    {
-      urls: [
-        'turn:relay.metered.ca:443?transport=tcp',
-        'turn:relay.metered.ca:443',
-        'turn:relay.metered.ca:80'
-      ],
-      username: 'e7d68233d99b711f726f5f4d',
-      credential: 'tYJEzRe2K5L7A0kO'
-    },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:443?transport=tcp',
-        'turn:openrelay.metered.ca:443', 
-        'turn:openrelay.metered.ca:80'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    {
-      urls: [
-        'turn:turn.anyfirewall.com:443?transport=tcp'
-      ],
-      username: 'webrtc',
-      credential: 'webrtc'
-    },
-    // STUN servers last
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ],
-  iceCandidatePoolSize: 10,
-  iceTransportPolicy: 'all',
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
-};
+// Use standard configuration by default
+let currentRtcConfig: RTCConfiguration = standardRtcConfiguration;
+const rtcConfiguration = currentRtcConfig;
 
 // Singleton instances for WebRTC to ensure persistence across component lifecycles
 let globalPeerConnection: RTCPeerConnection | null = null;
@@ -67,21 +38,21 @@ let peerConnectionStats: any = null;
 let isNegotiating = false; // Prevent offer/answer overlap
 let isRestartingIce = false; // Control ICE restart
 let connectionRetryCount = 0; // Number of connection retry attempts
-const MAX_CONNECTION_RETRIES = 10; // Increased number of attempts
+const MAX_CONNECTION_RETRIES = 15; // Increased number of attempts from 10 to 15
 let pendingCandidates: RTCIceCandidate[] = []; // List of pending ICE candidates
 
 // Adding stability variables
 let heartbeatInterval: number | null = null;
 let trackCheckInterval: number | null = null;
 let connectionMonitorInterval: number | null = null;
-const HEARTBEAT_INTERVAL = 3000; // Reduced heartbeat interval
-const TRACK_CHECK_INTERVAL = 3000; // 3 seconds
-const CONNECTION_MONITOR_INTERVAL = 5000; // 5 seconds
-const CONNECTION_STABILITY_THRESHOLD = 10000; // 10 seconds before considering the connection stable
+const HEARTBEAT_INTERVAL = 5000; // Increased from 3000 to 5000
+const TRACK_CHECK_INTERVAL = 5000; // Increased from 3000 to 5000
+const CONNECTION_MONITOR_INTERVAL = 8000; // Increased from 5000 to 8000
+const CONNECTION_STABILITY_THRESHOLD = 15000; // Increased from 10000 to 15000 seconds before considering the connection stable
 
 // Add constants for connection timeouts
-const CONNECTION_TIMEOUT = 8000; // Reduced timeout to 8 seconds
-const RECONNECT_DELAY = 500; // Reduced delay before reconnection
+const CONNECTION_TIMEOUT = 15000; // Increased from 8000 to 15000
+const RECONNECT_DELAY = 1000; // Increased from 500 to 1000
 
 // Get connection statistics
 async function getConnectionStats(): Promise<any> {
@@ -170,187 +141,101 @@ function stopStatsCollection() {
 // Diagnose connection issues
 function diagnoseConnectionIssues(): string {
   if (!globalPeerConnection) {
-    return 'No peer connection has been established.';
+    return 'لا يوجد اتصال نظير إلى نظير. جرب تحديث الصفحة أو افحص إعدادات المتصفح.';
   }
   
   // Check for specific issues
   if (failureReason) {
-    return `Connection failed: ${failureReason}`;
+    return `فشل الاتصال: ${failureReason}`;
   }
   
   if (lastConnectionError) {
-    return `Last error: ${lastConnectionError}`;
+    return `آخر خطأ: ${lastConnectionError}`;
   }
   
   if (!globalLocalStream || globalLocalStream.getAudioTracks().length === 0) {
-    return 'No local audio tracks available. Microphone may not be accessible.';
+    return 'لم يتم العثور على المايكروفون. يرجى التحقق من إعدادات الصوت وإذن المتصفح.';
   }
   
   if (!globalRemoteStream || globalRemoteStream.getAudioTracks().length === 0) {
-    return 'No remote audio tracks received. Partner may not have microphone access.';
+    return 'لم يتم استلام صوت من الطرف الآخر. قد تكون هناك مشكلة في الشبكة أو إعدادات المايكروفون لديهم.';
   }
   
   const state = globalPeerConnection.connectionState || globalPeerConnection.iceConnectionState;
   
+  // Check candidate types to diagnose NAT/firewall issues
+  const candidateInfo = {
+    localCandidates: (window as any).__localIceCandidates?.length || 0,
+    remoteCandidates: (window as any).__remoteIceCandidates?.length || 0,
+    hasLocalRelay: false,
+    hasRemoteRelay: false,
+    hasLocalServerReflexive: false,
+    hasRemoteServerReflexive: false
+  };
+  
+  // Check if we have TURN candidates (relay) which are critical for NAT traversal
+  if ((window as any).__localIceCandidates) {
+    for (const candidate of (window as any).__localIceCandidates) {
+      if (candidate.candidate.includes('typ relay')) {
+        candidateInfo.hasLocalRelay = true;
+      }
+      if (candidate.candidate.includes('typ srflx')) {
+        candidateInfo.hasLocalServerReflexive = true;
+      }
+    }
+  }
+  
+  if ((window as any).__remoteIceCandidates) {
+    for (const candidate of (window as any).__remoteIceCandidates) {
+      if (candidate.candidate.includes('typ relay')) {
+        candidateInfo.hasRemoteRelay = true;
+      }
+      if (candidate.candidate.includes('typ srflx')) {
+        candidateInfo.hasRemoteServerReflexive = true;
+      }
+    }
+  }
+  
+  // Provide specific diagnostic based on connection state and candidates
   switch (state) {
     case 'new':
-      return 'Connection is being set up but has not started yet.';
+      return 'الاتصال قيد الإعداد. يرجى الانتظار...';
     case 'connecting':
-      return 'Connection is in progress. This may take time depending on network conditions.';
-    case 'connected':
-      if (peerConnectionStats?.selectedCandidatePair?.state !== 'succeeded') {
-        return 'Connected but ICE negotiation not complete. Audio may be delayed.';
+      // Provide more specific info about the connection attempt
+      if (candidateInfo.localCandidates === 0) {
+        return 'لم يتم توليد مرشحات ICE المحلية. قد تكون هناك مشكلة في الاتصال بالإنترنت أو إعدادات جدار الحماية.';
       }
-      return 'Connection appears to be working. If no audio, check browser audio settings.';
+      
+      if (!candidateInfo.hasLocalRelay && !candidateInfo.hasLocalServerReflexive) {
+        return 'لم يتم توليد مرشحات STUN/TURN. تأكد من أن منفذ UDP 19302 غير محظور في جدار الحماية.';
+      }
+      
+      if (candidateInfo.localCandidates > 0 && candidateInfo.remoteCandidates === 0) {
+        return 'تم توليد مرشحات ICE المحلية ولكن لم يتم استلام مرشحات من الطرف الآخر بعد. تأكد من وجود الطرف الآخر على الاتصال.';
+      }
+      
+      return 'يتم إنشاء الاتصال. قد يستغرق هذا بعض الوقت حسب إعدادات الشبكة.';
+    case 'connected':
+      return 'تم الاتصال بنجاح! إذا كنت لا تسمع الطرف الآخر، تأكد من تشغيل الصوت في متصفحك.';
     case 'disconnected':
-      return 'Connection temporarily disconnected. This may resolve itself.';
+      return 'انقطع الاتصال مؤقتًا. جار محاولة إعادة الاتصال...';
     case 'failed':
-      return 'Connection failed. Likely causes: firewall, VPN, or network issues.';
+      // More detailed failure diagnosis
+      if (!candidateInfo.hasLocalRelay && !candidateInfo.hasRemoteRelay) {
+        return 'فشل الاتصال. لم يتم استخدام خوادم TURN. هذا يشير إلى مشكلة في جدار الحماية أو تكوين NAT. حاول الاتصال من شبكة أخرى.';
+      }
+      
+      if (candidateInfo.hasLocalRelay && candidateInfo.hasRemoteRelay) {
+        return 'فشل الاتصال رغم وجود مرشحات TURN. قد يكون هناك مشكلة في الشبكة أو تعطل في خدمة TURN.';
+      }
+      
+      return 'فشل الاتصال. يرجى تحديث الصفحة أو إعادة تشغيل الاتصال.';
     case 'closed':
-      return 'Connection was closed.';
+      return 'تم إغلاق الاتصال. يمكنك تحديث الصفحة للمحاولة مرة أخرى.';
     default:
-      return `Unknown connection state: ${state}`;
+      return `حالة الاتصال غير معروفة: ${state}. يرجى إعادة تحميل الصفحة.`;
   }
 }
-
-// متغير عام لتخزين إعدادات الاتصال الحالية
-let currentRtcConfig: RTCConfiguration = {
-  iceTransportPolicy: 'all', 
-  iceCandidatePoolSize: 10,
-  iceServers: [
-    // خوادم TURN مجانية - وضعها أولاً لإعطائها الأولوية
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    // خوادم TURN مجانية أخرى
-    {
-      urls: [
-        'turn:relay.metered.ca:80',
-        'turn:relay.metered.ca:443'
-      ],
-      username: 'e7d68233d99b711f726f5f4d',
-      credential: 'tYJEzRe2K5L7A0kO'
-    },
-    // خوادم TURN مجانية إضافية
-    {
-      urls: [
-        'turn:turn.anyfirewall.com:443?transport=tcp'
-      ],
-      username: 'webrtc',
-      credential: 'webrtc'
-    },
-    // خوادم STUN - بعد خوادم TURN
-    { 
-      urls: [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-        'stun:stun3.l.google.com:19302',
-        'stun:stun4.l.google.com:19302'
-      ]
-    }
-  ],
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
-};
-
-// إعدادات خوادم STUN فقط للاتصالات السريعة
-const fastRtcConfiguration: RTCConfiguration = {
-  iceTransportPolicy: 'all',
-  iceCandidatePoolSize: 10,
-  iceServers: [
-    {
-      urls: [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-        'stun:stun3.l.google.com:19302',
-        'stun:stun4.l.google.com:19302'
-      ]
-    }
-  ],
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
-};
-
-// إعدادات TURN فقط لحالات الشبكات المحمية - الآن مع خوادم TURN المجانية فقط
-const turnOnlyRtcConfiguration: RTCConfiguration = {
-  iceTransportPolicy: 'relay', // إجبار استخدام خوادم TURN فقط
-  iceCandidatePoolSize: 10,
-  iceServers: [
-    // خوادم TURN مجانية
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    },
-    // خوادم TURN إضافية للتنوع
-    {
-      urls: [
-        'turn:relay.metered.ca:80',
-        'turn:relay.metered.ca:443'
-      ],
-      username: 'e7d68233d99b711f726f5f4d',
-      credential: 'tYJEzRe2K5L7A0kO'
-    },
-    // خوادم TURN إضافية مجانية
-    {
-      urls: [
-        'turn:turn.anyfirewall.com:443?transport=tcp'
-      ],
-      username: 'webrtc',
-      credential: 'webrtc'
-    },
-    // خوادم TURN إضافية
-    {
-      urls: [
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ],
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
-};
-
-// إعدادات خوادم STUN/TURN مختلطة
-const standardRtcConfiguration: RTCConfiguration = {
-  iceTransportPolicy: 'all',
-  iceCandidatePoolSize: 10,
-  iceServers: [
-    // خوادم STUN مجانية من Google
-    { 
-      urls: [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302'
-      ]
-    },
-    // خوادم TURN مجانية
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ],
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
-};
 
 /**
  * WebRTC service for audio calls
@@ -456,253 +341,209 @@ export function useWebRTC() {
    * إنشاء اتصال RTCPeerConnection جديد مع تحسينات الاستقرار
    */
   const createPeerConnection = (): RTCPeerConnection => {
-    if (globalPeerConnection && globalPeerConnection.connectionState !== 'closed' && 
-        globalPeerConnection.connectionState !== 'failed' && 
-        globalPeerConnection.connectionState !== 'disconnected') {
-      if (DEBUG) console.log('[WebRTC] Reusing existing peer connection');
-      return globalPeerConnection;
-    }
-    
-    // البدء مباشرة بخوادم TURN لتسريع الاتصال والتغلب على مشاكل NAT
-    if (DEBUG) console.log('[WebRTC] Creating new peer connection with TURN servers');
-    
-    // إغلاق أي اتصال موجود
+    // Cleanup any existing connection
     if (globalPeerConnection) {
-      closeConnection();
+      try {
+        globalPeerConnection.close();
+        // Clear any global references to the connection and streams
+        globalPeerConnection = null;
+        if (globalRemoteStream) {
+          globalRemoteStream.getTracks().forEach(track => {
+            track.stop();
+          });
+          globalRemoteStream = null;
+        }
+      } catch (err) {
+        console.error('[WebRTC] Error cleaning up old peer connection:', err);
+      }
     }
-    
-    // إنشاء اتصال جديد مع إعطاء الأولوية لخوادم TURN
+
+    try {
+      // Create a new RTCPeerConnection with our configuration
     const pc = new RTCPeerConnection(rtcConfiguration);
     
-    // Create a new stream for remote audio
-    if (!globalRemoteStream) {
-      globalRemoteStream = new MediaStream();
-      remoteStream.value = globalRemoteStream;
-    }
-    
-    // Set up connection timeout
-    setupConnectionTimeout(pc);
-    
-    // Handle incoming tracks
-    pc.ontrack = (event) => {
-      if (DEBUG) console.log('[WebRTC] Track received:', event.track.kind);
+      // On negotiation needed
+      pc.onnegotiationneeded = async (event) => {
+        if (DEBUG) console.log('[WebRTC] Negotiation needed event', event);
+        
+        if (!canSetLocalDescription(pc) || isNegotiating) {
+          if (DEBUG) console.log('[WebRTC] Skipping negotiation - already in progress or not in stable state');
+          return;
+        }
+        
+        isNegotiating = true;
+        
+        try {
+          if (DEBUG) console.log('[WebRTC] Starting negotiation');
+          startNegotiation();
+        } catch (err) {
+          console.error('[WebRTC] Negotiation error:', err);
+          failureReason = `Negotiation error: ${err}`;
+          isNegotiating = false;
+        }
+      };
       
-      // Add the track to the remote stream
-      if (event.track.kind === 'audio') {
-        if (DEBUG) console.log('[WebRTC] Adding remote audio track to stream');
+      // Track ICE connection state changes
+      pc.oniceconnectionstatechange = () => {
+        if (DEBUG) console.log('[WebRTC] ICE Connection state changed to:', pc.iceConnectionState);
+        
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          // We have a connection! Clear any previous failures and reset retry counter
+          failureReason = '';
+          connectionRetryCount = 0;
+          
+          // Start monitoring the connection
+          startConnectionMonitoring();
+          // Start collecting stats for debugging
+          startStatsCollection();
+          
+          updateGlobalState('connected');
+        } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+          if (pc.iceConnectionState === 'failed') {
+            failureReason = 'ICE connection failed';
+            console.error('[WebRTC] ICE Connection failed');
+          }
+          
+          if (pc.iceConnectionState !== 'closed') {
+            // Attempt recovery if we're not explicitly closed
+            // Don't attempt recovery if we're already trying to restart
+            if (!isRestartingIce && connectionRetryCount < MAX_CONNECTION_RETRIES) {
+              console.log(`[WebRTC] Attempting ICE restart, attempt ${connectionRetryCount + 1} of ${MAX_CONNECTION_RETRIES}`);
+              attemptConnectionRecovery();
+            } else if (connectionRetryCount >= MAX_CONNECTION_RETRIES) {
+              console.error('[WebRTC] Max connection retry attempts reached, giving up');
+              updateGlobalState('failed');
+              
+              // Force a new connection instead of trying to recover this one
+              connectionRetryCount = 0;
+              failureReason = 'Max retries reached, connection failed';
+              closeConnection();
+            }
+        } else {
+            updateGlobalState('closed');
+          }
+        }
+
+        // Update unified state variable
+        globalConnectionState.value = pc.iceConnectionState;
+      };
+
+      // ICE candidate events
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          if (DEBUG) console.log('[WebRTC] New ICE candidate:', event.candidate);
+          
+          // Store local candidates for diagnostics
+          if (!(window as any).__localIceCandidates) {
+            (window as any).__localIceCandidates = [];
+          }
+          (window as any).__localIceCandidates.push(event.candidate);
+          
+          if (partnerId.value) {
+            // Send the ICE candidate to the peer
+            socket.value?.emit('webrtc-signal', {
+              type: 'ice-candidate',
+              candidate: event.candidate,
+              to: partnerId.value
+            });
+          } else {
+            // No partner ID yet, store the candidate for later
+            pendingCandidates.push(event.candidate);
+            if (DEBUG) console.log('[WebRTC] Storing ICE candidate for later. Total pending:', pendingCandidates.length);
+          }
+        } else {
+          // ICE gathering is complete
+          if (DEBUG) console.log('[WebRTC] ICE gathering complete');
+          
+          // If we have pending candidates and a partner ID, send them now
+          if (pendingCandidates.length > 0 && partnerId.value) {
+            pendingCandidates.forEach(candidate => {
+              socket.value?.emit('webrtc-signal', {
+                type: 'ice-candidate',
+                candidate,
+                to: partnerId.value
+              });
+            });
+            if (DEBUG) console.log(`[WebRTC] Sent ${pendingCandidates.length} pending ICE candidates`);
+            pendingCandidates = [];
+          }
+        }
+      };
+
+      // ICE gathering state change
+      pc.onicegatheringstatechange = () => {
+        if (DEBUG) console.log('[WebRTC] ICE gathering state changed to:', pc.iceGatheringState);
+      };
+      
+      // Connection state change (modern browsers only)
+      pc.onconnectionstatechange = () => {
+        if (DEBUG) console.log('[WebRTC] Connection state changed to:', pc.connectionState);
+        
+        updateGlobalState(pc.connectionState);
+        
+        if (pc.connectionState === 'connected') {
+          // Clear any previous failure reasons
+          failureReason = '';
+          connectionRetryCount = 0;
+        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+          if (pc.connectionState === 'failed' && !failureReason) {
+            failureReason = 'PeerConnection failed';
+          }
+        }
+      };
+      
+      // Signaling state change
+      pc.onsignalingstatechange = () => {
+        if (DEBUG) console.log('[WebRTC] Signaling state changed to:', pc.signalingState);
+        
+        if (pc.signalingState === 'stable') {
+          isNegotiating = false;
+        }
+      };
+      
+      // Track events - add incoming tracks to the remote stream
+      pc.ontrack = (event) => {
+        if (DEBUG) console.log('[WebRTC] Track received:', event.track);
+        
+        // Create remote stream if needed
         if (!globalRemoteStream) {
           globalRemoteStream = new MediaStream();
+          remoteStream.value = globalRemoteStream;
         }
+        
+        // Add the track to the stream
         globalRemoteStream.addTrack(event.track);
-        remoteStream.value = globalRemoteStream;
         
-        // تفعيل المسار الصوتي
-        event.track.enabled = true;
-      }
-    };
-      
-    // Handle connection state changes
-    pc.onconnectionstatechange = () => {
-      if (DEBUG) console.log('[WebRTC] Connection state changed:', pc.connectionState);
-      
-      // مهم: لا تقم بتغيير حالة الاتصال من "متصل" إلى "جاري الاتصال" إذا كان الصوت يعمل بالفعل
-      if (pc.connectionState === 'connecting' && globalConnectionState.value === 'connected') {
-        // تحقق من وجود مسارات صوتية تعمل
-        const hasWorkingAudioTracks = globalRemoteStream && 
-                                    globalRemoteStream.getAudioTracks().length > 0 &&
-                                    globalRemoteStream.getAudioTracks().some(track => track.enabled);
-        
-        if (hasWorkingAudioTracks) {
-          if (DEBUG) console.log('[WebRTC] Ignoring state change to "connecting" because audio is working');
-          return; // لا تغير الحالة إذا كان الصوت يعمل
+        // Log track stats
+        if (DEBUG) {
+          event.track.onunmute = () => {
+            console.log('[WebRTC] Track unmuted:', event.track.kind);
+          };
+          
+          event.track.onmute = () => {
+            console.log('[WebRTC] Track muted:', event.track.kind);
+          };
+          
+          event.track.onended = () => {
+            console.log('[WebRTC] Track ended:', event.track.kind);
+          };
         }
-      }
+      };
       
-      // خاص بحالة matched: لا تغير إلى connecting بعد أن نكون matched
-      if (pc.connectionState === 'connecting' && globalConnectionState.value === 'matched') {
-        if (DEBUG) console.log('[WebRTC] Still in negotiation phase, keeping matched state');
-        return; // الإبقاء على حالة matched خلال مرحلة التفاوض
-      }
+      // Set up connection timeout handling
+      setupConnectionTimeout(pc);
       
-      // تحديث الحالة فقط إذا لم تكن تجاهلناها أعلاه
-      globalConnectionState.value = pc.connectionState || 'new';
-      connectionState.value = pc.connectionState || 'new';
-      
-      // Handle specific states
-      if (pc.connectionState === 'connected') {
-        if (DEBUG) console.log('[WebRTC] Connection established');
-        connectionRetryCount = 0; // Reset retry count on successful connection
-        startConnectionMonitoring(); // Start monitoring connection quality
-        
-        // تأكد من وجود المسارات الصوتية وتحسين وقت استجابة الاتصال
-        setTimeout(() => {
-          // فحص المسارات وإصلاحها إذا لزم الأمر
-          checkAndFixTracks();
-          
-          // التأكد من أن الصوت يعمل قبل تحديث الحالة
-          const audioIsWorking = globalRemoteStream && 
-                               globalRemoteStream.getAudioTracks().length > 0 &&
-                               globalRemoteStream.getAudioTracks().some(track => track.readyState === 'live');
-          
-          if (DEBUG) console.log(`[WebRTC] Audio tracks working: ${audioIsWorking}`);
-          
-          // تحقق مرة أخرى بعد لحظة لضمان استقرار الاتصال
-          setTimeout(() => {
-            if (pc.connectionState === 'connected') {
-              checkAndFixTracks();
-              
-              // إذا كنا في حالة matched، حدث فوراً إلى حالة connected
-              if (globalConnectionState.value === 'matched') {
-                if (DEBUG) console.log('[WebRTC] Updating state from matched to connected');
-                globalConnectionState.value = 'connected';
-                connectionState.value = 'connected';
-              }
-            }
-          }, 1000);
-        }, 300);
-        
-        // Start the heartbeat to keep the connection alive
-        startConnectionHeartbeat();
-      } else if (pc.connectionState === 'failed') {
-        failureReason = 'Connection failed';
-        
-        // Try to recover automatically
-        if (connectionRetryCount < MAX_CONNECTION_RETRIES && !isRestartingIce) {
-          connectionRetryCount++;
-          console.log(`[WebRTC] Connection failed, attempting recovery (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
-          attemptConnectionRecovery();
-        } else {
-          console.error('[WebRTC] Connection failed and max retries reached');
-        }
-      } else if (pc.connectionState === 'disconnected') {
-        // عند فقدان الاتصال، لا تغير الحالة فورًا إذا كان الصوت لا يزال يعمل
-        const audioStillWorking = globalRemoteStream && 
-                               globalRemoteStream.getAudioTracks().length > 0 &&
-                               globalRemoteStream.getAudioTracks().some(track => track.readyState === 'live');
-        
-        if (audioStillWorking) {
-          if (DEBUG) console.log('[WebRTC] Connection reported as disconnected but audio still works, not changing state');
-          
-          // محاولة استعادة الاتصال في الخلفية بدون تغيير الحالة المرئية
-          if (!isRestartingIce && connectionRetryCount < MAX_CONNECTION_RETRIES) {
-            connectionRetryCount++;
-            console.log(`[WebRTC] Silent connection recovery (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
-            
-            // تأخير قصير قبل محاولة الإصلاح
-            setTimeout(() => {
-              // لنفحص مرة أخرى إذا كان الاتصال لا يزال مقطوعًا
-              if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-                if (DEBUG) console.log('[WebRTC] Attempting silent recovery');
-                attemptConnectionRecovery();
-              }
-            }, 1000);
-          }
-          
-          return; // لا تغير الحالة المرئية
-        }
-        
-        // When disconnected and audio not working, wait a moment before trying to recover
-        setTimeout(() => {
-          if (pc.connectionState === 'disconnected' && !isRestartingIce && connectionRetryCount < MAX_CONNECTION_RETRIES) {
-            connectionRetryCount++;
-            console.log(`[WebRTC] Connection disconnected, attempting recovery (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
-            attemptConnectionRecovery();
-          }
-        }, 1000); // تقليل وقت الانتظار
-      } else if (pc.connectionState === 'closed') {
-        stopConnectionHeartbeat();
-        stopConnectionMonitoring();
-      }
-    };
-    
-    // Handle ICE connection state changes
-    pc.oniceconnectionstatechange = () => {
-      if (DEBUG) console.log('[WebRTC] ICE connection state changed:', pc.iceConnectionState);
-      
-      // Handle specific ICE states
-      if (pc.iceConnectionState === 'failed') {
-        failureReason = 'ICE connection failed';
-        if (!isRestartingIce && connectionRetryCount < MAX_CONNECTION_RETRIES) {
-          connectionRetryCount++;
-          console.log(`[WebRTC] ICE connection failed, attempting restart (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
-          
-          // Restart ICE
-          isRestartingIce = true;
-          
-          // تجربة إعادة تشغيل ICE بعد فترة قصيرة
-          setTimeout(async () => {
-            if (pc.connectionState !== 'closed') {
-              try {
-                if (DEBUG) console.log('[WebRTC] Attempting ICE restart');
-                
-                const offer = await pc.createOffer({ iceRestart: true });
-                await pc.setLocalDescription(offer);
-                
-                if (socket.value && partnerId.value) {
-                  socket.value.emit('voice-offer', {
-                    offer: pc.localDescription,
-                    to: partnerId.value
-                  });
-                }
-                
-                // Reset the ICE restart flag after some time
-                setTimeout(() => {
-                  isRestartingIce = false;
-                }, 5000);
-              } catch (error) {
-                console.error('[WebRTC] ICE restart failed:', error);
-                isRestartingIce = false;
-              }
-            } else {
-              isRestartingIce = false;
-            }
-          }, 1000);
-        }
-      } else if (pc.iceConnectionState === 'connected') {
-        // عند الاتصال الناجح، نتحقق من وجود مسارات صوتية
-        checkAndFixTracks();
-      }
-    };
-    
-    // Handle ICE candidate generation
-    pc.onicecandidate = (event) => {
-      if (!event.candidate) {
-        if (DEBUG) console.log('[WebRTC] ICE gathering complete');
-        return;
-      }
-      
-      if (DEBUG) console.log('[WebRTC] ICE candidate generated:', event.candidate.candidate);
-      
-      // Send the ICE candidate to the remote peer if we have a socket and partner
-      if (socket.value && partnerId.value) {
-        if (DEBUG) console.log('[WebRTC] Sending ICE candidate to partner');
-        socket.value.emit('ice-candidate', {
-          candidate: event.candidate,
-          to: partnerId.value
-        });
-      }
-    };
-    
-    // Handle ICE gathering state changes
-    pc.onicegatheringstatechange = () => {
-      if (DEBUG) console.log('[WebRTC] ICE gathering state changed:', pc.iceGatheringState);
-    };
-    
-    // Handle signaling state changes
-    pc.onsignalingstatechange = () => {
-      if (DEBUG) console.log('[WebRTC] Signaling state changed:', pc.signalingState);
-      
-      // If signaling state is stable, reset negotiating flag
-      if (pc.signalingState === 'stable') {
-        isNegotiating = false;
-      }
-    };
-    
-    // Update global reference
+      // Store the connection globally
     globalPeerConnection = pc;
-    peerConnection.value = pc;
     
     return pc;
+    } catch (error) {
+      console.error('[WebRTC] Error creating peer connection:', error);
+      lastConnectionError = `Creation error: ${error}`;
+      failureReason = 'Failed to create connection';
+      updateGlobalState('failed');
+      throw error;
+    }
   };
   
   /**
@@ -823,13 +664,10 @@ export function useWebRTC() {
       if (DEBUG) console.log('[WebRTC] Setting local description');
       await pc.setLocalDescription(offer);
       
-      // إنتظار اكتمال جمع مرشحات ICE
-      if (DEBUG) console.log('[WebRTC] Waiting for ICE gathering to complete');
-      await waitForIceGatheringComplete(pc);
-      
-      // إرسال العرض إلى الشريك
+      // استخدام Trickle ICE بدلاً من انتظار اكتمال التجميع
+      // سيتم إرسال العرض فورًا وإرسال مرشحات ICE لاحقًا عند توليدها
       if (socket.value && targetPartnerId) {
-        if (DEBUG) console.log('[WebRTC] Sending offer to partner');
+        if (DEBUG) console.log('[WebRTC] Sending immediate offer using Trickle ICE');
         
         // للتوافق مع الخادم الحالي
         socket.value.emit('voice-offer', {
@@ -883,12 +721,13 @@ export function useWebRTC() {
       
       pc.addEventListener('icegatheringstatechange', checkState);
       
-      // Set a timeout to resolve anyway after a reasonable time
+      // تقليل وقت الانتظار من 2000 إلى 1000 مللي ثانية
+      // سيتم المتابعة حتى لو لم تكتمل عملية التجميع
       setTimeout(() => {
         pc.removeEventListener('icegatheringstatechange', checkState);
         if (DEBUG) console.log('[WebRTC] ICE gathering timed out, but continuing anyway');
         resolve();
-      }, 2000);
+      }, 1000);
     });
   };
   
@@ -1638,23 +1477,65 @@ export function useWebRTC() {
     if (DEBUG) console.log('[WebRTC] Attempting connection recovery');
     
     try {
-      // إعادة تشغيل ICE
+      // آلية سريعة لإعادة استخدام حالة المفاوضة وتسريع الاتصال
+      isRestartingIce = true;
+      
+      // تبديل تكوين الخادم لتسريع الاتصال
+      if (currentRtcConfig === standardRtcConfiguration) {
+        currentRtcConfig = fastRtcConfiguration;
+        console.log('[WebRTC] Switching to fast configuration for quicker connection');
+      } else if (connectionRetryCount > 5) {
+        // إذا فشلت عدة محاولات، استخدم تكوين TURN فقط
+        currentRtcConfig = turnOnlyRtcConfiguration;
+        console.log('[WebRTC] Switching to TURN-only configuration');
+      }
+      
+      // إعادة تشغيل ICE بشكل مباشر
       if (globalPeerConnection.restartIce) {
         globalPeerConnection.restartIce();
         
-        // إعادة تفاوض على الاتصال
-        const offer = await globalPeerConnection.createOffer({ iceRestart: true });
+        // إنشاء عرض جديد مع تمكين إعادة تشغيل ICE
+        const offer = await globalPeerConnection.createOffer({ 
+          iceRestart: true,
+          offerToReceiveAudio: true
+        });
+        
         await globalPeerConnection.setLocalDescription(offer);
         
         if (socket.value) {
+          // إرسال العرض فوراً دون انتظار
           socket.value.emit('offer', {
+            offer: globalPeerConnection.localDescription,
+            to: partnerId.value
+          });
+          
+          // أيضا إرسال بالتنسيق الجديد
+          socket.value.emit('webrtc-signal', {
+            type: 'offer',
             offer: globalPeerConnection.localDescription,
             to: partnerId.value
           });
         }
       }
+      
+      // إعادة تعيين علم إعادة التشغيل بعد فترة قصيرة
+      setTimeout(() => {
+        isRestartingIce = false;
+      }, 500);
+      
     } catch (error) {
       console.error('[WebRTC] Recovery attempt failed:', error);
+      isRestartingIce = false;
+      
+      // في حالة الفشل، إعادة بدء الاتصال من البداية
+      if (connectionRetryCount < MAX_CONNECTION_RETRIES) {
+        setTimeout(() => {
+          closeConnection();
+          if (partnerId.value) {
+            createOffer(partnerId.value);
+          }
+        }, 200);
+      }
     }
   }
   
@@ -1800,10 +1681,26 @@ export function useWebRTC() {
       clearTimeout((window as any).__webrtcConnectionTimeout);
     }
     
-    // Set a new timeout
+    // تقليل وقت الانتظار لتسريع عملية التبديل بين التكوينات
+    const quickTimeout = 5000; // 5 ثواني فقط لتجربة التكوين الأول
+    
+    // Set a quick first timeout to try fast configuration quickly
     (window as any).__webrtcConnectionTimeout = setTimeout(() => {
       if (pc.connectionState === 'connecting' || pc.connectionState === 'new') {
-        if (DEBUG) console.log(`[WebRTC] Connection attempt timed out after ${CONNECTION_TIMEOUT/1000} seconds`);
+        if (DEBUG) console.log(`[WebRTC] Connection not established after ${quickTimeout/1000} seconds, trying fast config`);
+        
+        // التبديل مباشرة إلى التكوين السريع لتسريع الاتصال
+        currentRtcConfig = fastRtcConfiguration;
+        
+        if (partnerId.value && !isNegotiating) {
+          // محاولة سريعة باستخدام الإعداد الجديد
+          createOffer(partnerId.value);
+        }
+        
+        // Set a second timeout for TURN-only config
+        (window as any).__webrtcConnectionTimeout = setTimeout(() => {
+          if (pc.connectionState === 'connecting' || pc.connectionState === 'new') {
+            if (DEBUG) console.log(`[WebRTC] Connection still not established, trying TURN-only config`);
         
         // جمع معلومات تشخيصية إضافية
         const candidateInfo = {
@@ -1813,38 +1710,22 @@ export function useWebRTC() {
         };
         
         console.log('[WebRTC] Connection diagnostic info:', JSON.stringify(candidateInfo));
-        lastConnectionError = `Connection timed out. Local candidates: ${candidateInfo.localCandidates}, Remote: ${candidateInfo.remoteCandidates}`;
-        
-        // التحقق إذا تم توليد أي مرشحات ICE محلية
-        if (candidateInfo.localCandidates === 0) {
-          console.error('[WebRTC] No local ICE candidates generated, could be a network/firewall issue');
-          lastConnectionError += '. No local candidates - check firewall settings';
-        }
-        
-        // محاولة استخدام خوادم TURN إذا فشلت STUN أو العكس
-        if (partnerId.value) {
-          if (DEBUG) console.log('[WebRTC] Restarting connection with different servers');
-          
-          // إغلاق الاتصال الحالي
+            
+            // تغيير التكوين إلى خوادم TURN فقط للاتصال في الحالات الصعبة
+            currentRtcConfig = turnOnlyRtcConfiguration;
+            
+            // إغلاق الاتصال الحالي وبدء اتصال جديد بالتكوين الجديد
           closeConnection();
           
-          // إنشاء اتصال جديد باستخدام إعدادات مختلفة
-          setTimeout(() => {
             if (partnerId.value) {
-              // تبديل بين إعدادات الاتصال المختلفة بناءً على المحاولة السابقة
-              if (currentRtcConfig === standardRtcConfiguration || currentRtcConfig === fastRtcConfiguration) {
-                if (DEBUG) console.log('[WebRTC] Switching to TURN-only configuration');
-                currentRtcConfig = turnOnlyRtcConfiguration;
-              } else {
-                if (DEBUG) console.log('[WebRTC] Switching to standard configuration');
-                currentRtcConfig = standardRtcConfiguration;
-              }
+              setTimeout(() => {
               createOffer(partnerId.value);
+              }, 200);
             }
-          }, RECONNECT_DELAY);
         }
+        }, 5000); // 5 ثواني إضافية للتكوين TURN
       }
-    }, CONNECTION_TIMEOUT);
+    }, quickTimeout);
   }
   
   // دالة للحصول على تقرير تشخيصي شامل
@@ -1879,6 +1760,12 @@ export function useWebRTC() {
       
       try {
       if (DEBUG) console.log('[WebRTC] Adding received ICE candidate:', candidate.candidate);
+      
+      // Store remote candidates for diagnostics
+      if (!(window as any).__remoteIceCandidates) {
+        (window as any).__remoteIceCandidates = [];
+      }
+      (window as any).__remoteIceCandidates.push(candidate);
       
       // التحقق من أن الوصف المحلي موجود قبل إضافة المرشحين
       if (!globalPeerConnection.remoteDescription || !globalPeerConnection.localDescription) {
@@ -2020,4 +1907,33 @@ function isSignalingStateStable(pc: RTCPeerConnection): boolean {
 // إضافة دالة للتحقق من إمكانية تعيين الوصف المحلي
 function canSetLocalDescription(pc: RTCPeerConnection): boolean {
   return pc.signalingState === 'stable' || pc.signalingState === 'have-remote-offer';
+}
+
+// Function to update the global connection state in a centralized way
+function updateGlobalState(state: string): void {
+  // Only update if state actually changed
+  if (globalConnectionState.value !== state) {
+    if (DEBUG) console.log(`[WebRTC] Connection state changing from ${globalConnectionState.value} to ${state}`);
+    globalConnectionState.value = state;
+    
+    // Additional state-specific actions
+    if (state === 'connected' || state === 'completed') {
+      // Reset failure tracking when we connect successfully
+      failureReason = '';
+      lastConnectionError = '';
+      connectionRetryCount = 0;
+      
+      // Log success for debugging
+      console.log('[WebRTC] Connection established successfully');
+    } 
+    else if (state === 'failed' || state === 'disconnected') {
+      console.warn(`[WebRTC] Connection ${state}: ${failureReason || 'Unknown reason'}`);
+      
+      // Track failures
+      if (state === 'failed') {
+        connectionRetryCount++;
+        console.log(`[WebRTC] Connection failure count: ${connectionRetryCount}/${MAX_CONNECTION_RETRIES}`);
+      }
+    }
+  }
 }
