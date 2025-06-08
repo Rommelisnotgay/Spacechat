@@ -12,12 +12,13 @@
     <!-- Matched State - New state for quick transition -->
     <div v-else-if="status === 'matched'">
       <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-r from-yellow-500 to-green-500 rounded-full flex items-center justify-center animate-pulse">
-        <span class="text-2xl">🔄</span>
+        <span v-if="partnerInfo?.flag" class="text-2xl">{{ partnerInfo.flag }}</span>
+        <span v-else class="text-2xl">🔄</span>
       </div>
-      <h2 class="text-lg font-semibold mb-2 text-yellow-400">Match Found!</h2>
+      <h2 class="text-lg font-semibold mb-2 text-yellow-400">{{ partnerInfo?.vibe ? getVibeDisplayName(partnerInfo.vibe) : 'Match Found!' }}</h2>
       <div v-if="partnerInfo" class="flex items-center justify-center gap-2 text-gray-300">
-        <span class="text-xl">{{ partnerInfo.flag }}</span>
-        <span class="text-sm">{{ partnerInfo.country }}</span>
+        <span class="text-xl">{{ partnerInfo.flag || '🌍' }}</span>
+        <span class="text-sm font-medium">{{ partnerInfo.country }}</span>
       </div>
       <p class="text-sm text-yellow-400 mt-2">Setting up voice connection...</p>
       
@@ -30,12 +31,13 @@
     <!-- Connected State -->
     <div v-else-if="status === 'connected'">
       <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-r from-green-500 to-blue-500 rounded-full flex items-center justify-center">
-        <span class="text-2xl">👥</span>
+        <span v-if="partnerInfo?.flag" class="text-2xl">{{ partnerInfo.flag }}</span>
+        <span v-else class="text-2xl">👥</span>
       </div>
-      <h2 class="text-lg font-semibold mb-2">Connected!</h2>
+      <h2 class="text-lg font-semibold mb-2">{{ partnerInfo?.vibe ? getVibeDisplayName(partnerInfo.vibe) : 'Connected!' }}</h2>
       <div v-if="partnerInfo" class="flex items-center justify-center gap-2 text-gray-300">
-        <span class="text-xl">{{ partnerInfo.flag }}</span>
-        <span class="text-sm">{{ partnerInfo.country }}</span>
+        <span class="text-xl">{{ partnerInfo.flag || '🌍' }}</span>
+        <span class="text-sm font-medium">{{ partnerInfo.country }}</span>
       </div>
       <p class="text-sm text-green-400 mt-2">You can talk now</p>
     </div>
@@ -73,6 +75,7 @@ interface PartnerInfo {
   flag?: string;
   country?: string;
   id?: string;
+  vibe?: string;
 }
 
 const props = defineProps({
@@ -103,6 +106,24 @@ const connectionStatusText = computed(() => {
     default: return 'Disconnected';
   }
 });
+
+const getVibeDisplayName = (vibe: string) => {
+  // تحويل قيم الفايب إلى أسماء عرض سهلة الفهم
+  switch (vibe.toLowerCase()) {
+    case 'any':
+      return 'Go With the Flow';
+    case 'chill':
+      return 'Chill';
+    case 'fun':
+      return 'Fun';
+    case 'curious':
+      return 'Curious';
+    case 'creative':
+      return 'Creative';
+    default:
+      return vibe; // إرجاع القيمة الأصلية إذا لم يتم التعرف عليها
+  }
+};
 </script>
 
 <style scoped>

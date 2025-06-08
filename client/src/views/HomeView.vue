@@ -198,9 +198,9 @@
     </div>
 
     <!-- Filters Modal -->
-    <div v-if="isFiltersOpen" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto">
-        <div class="flex justify-between items-center mb-4">
+    <div v-if="isFiltersOpen" class="fixed inset-0 bg-black/50 flex items-center justify-center z-20 p-4">
+      <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto relative">
+        <div class="flex justify-between items-center mb-6">
           <h2 class="text-lg font-semibold text-emerald-400">Filters & Preferences</h2>
           <button
             @click="isFiltersOpen = false"
@@ -210,31 +210,19 @@
           </button>
         </div>
 
-        <div class="space-y-4">
-          <!-- Interest Keywords -->
-          <div>
-            <label class="block text-sm font-medium mb-2 text-teal-400">Interest Keywords</label>
-            <input
-              v-model="interests"
-              type="text"
-              placeholder="e.g., music, travel, technology..."
-              class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-400 focus:border-emerald-500 focus:outline-none"
-            />
-            <p class="text-xs text-gray-400 mt-1">Separate with commas</p>
-          </div>
-
+        <div class="space-y-6">
           <!-- Preferred Countries -->
           <div>
-            <label class="block text-sm font-medium mb-2 text-emerald-400">Preferred Countries</label>
-            <div class="bg-gray-700 border border-gray-600 rounded-lg p-2 min-h-[60px] max-h-32 overflow-y-auto">
+            <label class="block text-sm font-medium mb-3 text-emerald-400">Preferred Countries</label>
+            <div class="bg-gray-700 border border-gray-600 rounded-lg p-3 min-h-[60px] max-h-32 overflow-y-auto scrollbar-hide">
               <p v-if="preferredCountries.length === 0" class="text-xs text-gray-400 p-2">No countries selected</p>
-              <div v-else class="flex flex-wrap gap-1">
+              <div v-else class="flex flex-wrap gap-2">
                 <span 
                   v-for="countryCode in preferredCountries" 
                   :key="countryCode"
                   class="bg-emerald-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1"
                 >
-                  {{ getCountryFlag(countryCode) }} {{ getCountryName(countryCode) }}
+                  <span class="flag-icon">{{ getCountryFlag(countryCode) }}</span> {{ getCountryName(countryCode) }}
                   <button
                     @click="removePreferredCountry(countryCode)"
                     class="text-emerald-200 hover:text-white ml-1"
@@ -245,27 +233,27 @@
               </div>
             </div>
             
-            <select-vue
-              v-model="tempCountrySelect"
-              :options="availableCountriesForPreferred"
-              placeholder="Add preferred country..."
-              class="mt-2"
-              @change="addPreferredCountry"
-            />
+            <div class="mt-2 relative preferred-dropdown" ref="preferredDropdownRef">
+              <div @click="togglePreferredDropdown" class="cursor-pointer flex items-center justify-between w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-white">
+                <span class="text-gray-300">Add preferred country...</span>
+                <span class="ml-1">▼</span>
+              </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">You'll be matched only with users from these countries</p>
           </div>
 
           <!-- Blocked Countries -->
           <div>
-            <label class="block text-sm font-medium mb-2 text-red-400">Blocked Countries</label>
-            <div class="bg-gray-700 border border-gray-600 rounded-lg p-2 min-h-[60px] max-h-32 overflow-y-auto">
+            <label class="block text-sm font-medium mb-3 text-red-400">Blocked Countries</label>
+            <div class="bg-gray-700 border border-gray-600 rounded-lg p-3 min-h-[60px] max-h-32 overflow-y-auto scrollbar-hide">
               <p v-if="blockedCountries.length === 0" class="text-xs text-gray-400 p-2">No countries blocked</p>
-              <div v-else class="flex flex-wrap gap-1">
+              <div v-else class="flex flex-wrap gap-2">
                 <span 
                   v-for="countryCode in blockedCountries" 
                   :key="countryCode"
                   class="bg-red-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1"
                 >
-                  {{ getCountryFlag(countryCode) }} {{ getCountryName(countryCode) }}
+                  <span class="flag-icon">{{ getCountryFlag(countryCode) }}</span> {{ getCountryName(countryCode) }}
                   <button
                     @click="removeBlockedCountry(countryCode)"
                     class="text-red-200 hover:text-white ml-1"
@@ -276,39 +264,60 @@
               </div>
             </div>
             
-            <select-vue
-              v-model="tempBlockedSelect"
-              :options="availableCountriesForBlocked"
-              placeholder="Add blocked country..."
-              class="mt-2"
-              @change="addBlockedCountry"
-            />
-          </div>
-
-          <!-- Auto-Next Timer -->
-          <div>
-            <label class="block text-sm font-medium mb-2 text-orange-400">Auto-Next Timer</label>
-            <select-vue
-              v-model="autoNextTimer"
-              :options="timerOptions"
-              placeholder="Select timer"
-            />
+            <div class="mt-2 relative blocked-dropdown" ref="blockedDropdownRef">
+              <div @click="toggleBlockedDropdown" class="cursor-pointer flex items-center justify-between w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-white">
+                <span class="text-gray-300">Add blocked country...</span>
+                <span class="ml-1">▼</span>
+              </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">You won't be matched with users from these countries</p>
           </div>
         </div>
         
-        <div class="flex gap-2 mt-6">
+        <div class="flex gap-2 mt-8">
           <button
             @click="clearFilters"
-            class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg text-sm transition-colors"
+            class="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-3 px-4 rounded-lg text-sm transition-colors"
           >
             Clear All
           </button>
           <button
             @click="applyFilters"
-            class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded-lg text-sm transition-colors"
+            class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-4 rounded-lg text-sm transition-colors"
           >
             Apply Filters
           </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Dropdown lists outside the filters modal -->
+    <div v-if="showPreferredDropdown" class="fixed z-50 max-h-64 bg-gray-700 border border-gray-600 rounded-lg shadow-lg overflow-y-auto scrollbar-hide dropdown-outer preferred-outer">
+      <div class="py-1 w-full">
+        <div v-if="availableCountriesForPreferred.length === 0" class="text-xs text-gray-400 px-3 py-2">No more countries available</div>
+        <div 
+          v-for="country in availableCountriesForPreferred" 
+          :key="country.value"
+          @click="() => { addPreferredCountry(country.value); togglePreferredDropdown(); }"
+          class="cursor-pointer px-3 py-2 hover:bg-gray-600 flex items-center gap-2"
+        >
+          <span class="flag-icon w-6 text-center">{{ country.flag }}</span>
+          <span class="text-sm">{{ country.name }}</span>
+        </div>
+      </div>
+    </div>
+    
+    <div v-if="showBlockedDropdown" class="fixed z-50 max-h-64 bg-gray-700 border border-gray-600 rounded-lg shadow-lg overflow-y-auto scrollbar-hide dropdown-outer blocked-outer">
+      <div class="py-1 w-full">
+        <div v-if="availableCountriesForBlocked.length === 0" class="text-xs text-gray-400 px-3 py-2">No more countries available</div>
+        <div 
+          v-for="country in availableCountriesForBlocked" 
+          :key="country.value"
+          @click="() => { addBlockedCountry(country.value); toggleBlockedDropdown(); }"
+          class="cursor-pointer px-3 py-2 hover:bg-gray-600 flex items-center gap-2"
+        >
+          <span class="flag-icon w-6 text-center">{{ country.flag }}</span>
+          <span class="text-sm">{{ country.name }}</span>
         </div>
       </div>
     </div>
@@ -344,7 +353,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue';
 import { useSocket } from '@/services/socket';
 import { useWebRTC } from '@/services/webrtc';
 import { useChat } from '@/services/chat';
@@ -366,6 +375,7 @@ const partnerId = ref<string | null>(null);
 const partnerInfo = ref<any>(null);
 const connectionError = ref<string>(''); // Add variable for error messages
 const isMuted = ref(false);
+let connectionCheckInterval: ReturnType<typeof setInterval> | null = null; // Add interval for checking connection status
 
 // UI state
 const isChatOpen = ref(false);
@@ -382,42 +392,89 @@ const callHistory = ref<Array<{id: string; country: string; flag: string; timest
 // Filter options
 const selectedVibe = ref('any');
 const showVibeDropdown = ref(false);
-const interests = ref('');
 const preferredCountries = ref<string[]>([]);
 const blockedCountries = ref<string[]>([]);
-const autoNextTimer = ref<string | number | undefined>('off');
 const tempCountrySelect = ref('');
 const tempBlockedSelect = ref('');
+const showPreferredDropdown = ref(false);
+const showBlockedDropdown = ref(false);
 
 // Vibes options
 const vibes = [
-  { value: 'any', text: 'Any Vibe', emoji: '🌟' },
+  { value: 'any', text: 'Go With the Flow', emoji: '🌟' },
   { value: 'chill', text: 'Chill', emoji: '😌' },
   { value: 'fun', text: 'Fun', emoji: '🎉' },
   { value: 'curious', text: 'Curious', emoji: '🤔' },
   { value: 'creative', text: 'Creative', emoji: '🎨' }
 ];
 
-// Options data
-const timerOptions = [
-  { value: 'off', label: '⏰ Disabled' },
-  { value: '30', label: '30 seconds' },
-  { value: '60', label: '60 seconds' },
-  { value: '90', label: '90 seconds' }
-];
+// Temporary countries list until API is loaded
+const countries = ref<any[]>([
+  { value: 'any', label: '🌍 Any Country', name: 'Any Country', flag: '🌍' },
+  { value: 'sa', label: '🇸🇦 Saudi Arabia', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { value: 'ae', label: '🇦🇪 UAE', name: 'United Arab Emirates', flag: '🇦🇪' },
+  { value: 'eg', label: '🇪🇬 Egypt', name: 'Egypt', flag: '🇪🇬' },
+  { value: 'us', label: '🇺🇸 USA', name: 'United States', flag: '🇺🇸' },
+  { value: 'gb', label: '🇬🇧 UK', name: 'United Kingdom', flag: '🇬🇧' },
+  { value: 'de', label: '🇩🇪 Germany', name: 'Germany', flag: '🇩🇪' },
+  { value: 'fr', label: '🇫🇷 France', name: 'France', flag: '🇫🇷' },
+  { value: 'ca', label: '🇨🇦 Canada', name: 'Canada', flag: '🇨🇦' },
+  { value: 'au', label: '🇦🇺 Australia', name: 'Australia', flag: '🇦🇺' },
+  { value: 'jp', label: '🇯🇵 Japan', name: 'Japan', flag: '🇯🇵' },
+  { value: 'kr', label: '🇰🇷 Korea', name: 'South Korea', flag: '🇰🇷' },
+  { value: 'cn', label: '🇨🇳 China', name: 'China', flag: '🇨🇳' },
+  { value: 'in', label: '🇮🇳 India', name: 'India', flag: '🇮🇳' },
+  { value: 'br', label: '🇧🇷 Brazil', name: 'Brazil', flag: '🇧🇷' },
+  { value: 'ma', label: '🇲🇦 Morocco', name: 'Morocco', flag: '🇲🇦' },
+  { value: 'dz', label: '🇩🇿 Algeria', name: 'Algeria', flag: '🇩🇿' },
+  { value: 'tn', label: '🇹🇳 Tunisia', name: 'Tunisia', flag: '🇹🇳' },
+  { value: 'ly', label: '🇱🇾 Libya', name: 'Libya', flag: '🇱🇾' },
+  { value: 'jo', label: '🇯🇴 Jordan', name: 'Jordan', flag: '🇯🇴' },
+  { value: 'lb', label: '🇱🇧 Lebanon', name: 'Lebanon', flag: '🇱🇧' },
+  { value: 'kw', label: '🇰🇼 Kuwait', name: 'Kuwait', flag: '🇰🇼' },
+  { value: 'bh', label: '🇧🇭 Bahrain', name: 'Bahrain', flag: '🇧🇭' },
+  { value: 'qa', label: '🇶🇦 Qatar', name: 'Qatar', flag: '🇶🇦' },
+  { value: 'om', label: '🇴🇲 Oman', name: 'Oman', flag: '🇴🇲' },
+  { value: 'ye', label: '🇾🇪 Yemen', name: 'Yemen', flag: '🇾🇪' },
+  { value: 'iq', label: '🇮🇶 Iraq', name: 'Iraq', flag: '🇮🇶' },
+  { value: 'sy', label: '🇸🇾 Syria', name: 'Syria', flag: '🇸🇾' },
+  { value: 'sd', label: '🇸🇩 Sudan', name: 'Sudan', flag: '🇸🇩' }
+]);
 
-const countries: any[] = [
-  { value: 'any', label: '🌍 Any Country' },
-  { value: 'us', label: '🇺🇸 United States' },
-  { value: 'gb', label: '🇬🇧 United Kingdom' },
-  { value: 'ca', label: '🇨🇦 Canada' },
-  { value: 'au', label: '🇦🇺 Australia' },
-  { value: 'de', label: '🇩🇪 Germany' },
-  { value: 'fr', label: '🇫🇷 France' },
-  { value: 'it', label: '🇮🇹 Italy' },
-  { value: 'es', label: '🇪🇸 Spain' },
-  { value: 'jp', label: '🇯🇵 Japan' }
-];
+// Load all countries from API
+const loadCountries = async () => {
+  try {
+    const response = await fetch('/api/countries');
+    if (!response.ok) {
+      throw new Error('Failed to load countries');
+    }
+    
+    const data = await response.json();
+    // Use static list if API fails
+    if (!data || data.length === 0) {
+      console.log('Using static countries list');
+      return;
+    }
+    
+    // Add "any" option to the beginning
+    countries.value = [
+      { value: 'any', label: '🌍 Any Country', name: 'Any Country', flag: '🌍' },
+      ...data
+    ];
+    
+    console.log('Countries loaded:', countries.value.length);
+  } catch (error) {
+    console.error('Failed to load countries list:', error);
+    // Static list is already loaded as fallback
+  }
+};
+
+// User's own country information
+const userLocation = ref<{
+  country: string;
+  countryCode: string;
+  flag: string;
+} | null>(null);
 
 // Cosmic quotes
 const cosmicQuotes = [
@@ -432,6 +489,7 @@ const currentQuote = ref(cosmicQuotes[Math.floor(Math.random() * cosmicQuotes.le
 // Initialize services
 const socketService = useSocket();
 const socket = socketService.socket;
+const { isConnected } = socketService;
 const { 
   remoteStream,
   localStream,
@@ -459,7 +517,8 @@ watch(() => gameRoomId.value, (newRoomId) => {
 
 // Computed properties for country selectors
 const availableCountriesForPreferred = computed(() => {
-  return countries.filter(c => 
+  // Show all countries when no preferred countries are selected
+  return countries.value.filter(c => 
     c.value !== 'any' && 
     !preferredCountries.value.includes(c.value) && 
     !blockedCountries.value.includes(c.value)
@@ -467,7 +526,8 @@ const availableCountriesForPreferred = computed(() => {
 });
 
 const availableCountriesForBlocked = computed(() => {
-  return countries.filter(c => 
+  // Show all countries when no blocked countries are selected
+  return countries.value.filter(c => 
     c.value !== 'any' && 
     !blockedCountries.value.includes(c.value) && 
     !preferredCountries.value.includes(c.value)
@@ -526,8 +586,7 @@ const findNext = async () => {
       vibe: selectedVibe.value,
       preferences: {
         preferredCountries: preferredCountries.value.length ? preferredCountries.value : undefined,
-        blockedCountries: blockedCountries.value.length ? blockedCountries.value : undefined,
-        interests: interests.value ? interests.value.split(',').map(i => i.trim()) : undefined
+        blockedCountries: blockedCountries.value.length ? blockedCountries.value : undefined
       }
     });
     
@@ -581,10 +640,9 @@ const selectGame = (game: string) => {
 };
 
 // Filter methods
-const addPreferredCountry = () => {
-  if (tempCountrySelect.value && !preferredCountries.value.includes(tempCountrySelect.value)) {
-    preferredCountries.value.push(tempCountrySelect.value);
-    tempCountrySelect.value = '';
+const addPreferredCountry = (countryCode: string) => {
+  if (countryCode && !preferredCountries.value.includes(countryCode)) {
+    preferredCountries.value.push(countryCode);
   }
 };
 
@@ -592,10 +650,9 @@ const removePreferredCountry = (countryCode: string) => {
   preferredCountries.value = preferredCountries.value.filter(c => c !== countryCode);
 };
 
-const addBlockedCountry = () => {
-  if (tempBlockedSelect.value && !blockedCountries.value.includes(tempBlockedSelect.value)) {
-    blockedCountries.value.push(tempBlockedSelect.value);
-    tempBlockedSelect.value = '';
+const addBlockedCountry = (countryCode: string) => {
+  if (countryCode && !blockedCountries.value.includes(countryCode)) {
+    blockedCountries.value.push(countryCode);
   }
 };
 
@@ -604,25 +661,27 @@ const removeBlockedCountry = (countryCode: string) => {
 };
 
 const clearFilters = () => {
-  interests.value = '';
   preferredCountries.value = [];
   blockedCountries.value = [];
-  autoNextTimer.value = 'off';
+  localStorage.removeItem('preferredCountries');
+  localStorage.removeItem('blockedCountries');
 };
 
 const applyFilters = () => {
   isFiltersOpen.value = false;
+  saveFilterSettings();
+  restartMatching();
 };
 
 // Utility methods
 const getCountryFlag = (countryCode: string): string => {
-  const country = countries.find(c => c.value === countryCode);
-  return country ? country.label.split(' ')[0] : '🏳️';
+  const country = countries.value.find(c => c.value === countryCode);
+  return country ? country.flag : '🏳️';
 };
 
 const getCountryName = (countryCode: string): string => {
-  const country = countries.find(c => c.value === countryCode);
-  return country ? country.label.split(' ').slice(1).join(' ') : 'Unknown';
+  const country = countries.value.find(c => c.value === countryCode);
+  return country ? country.name : 'Earth';
 };
 
 const formatTime = (timestamp: number): string => {
@@ -649,15 +708,169 @@ const getVibeEmoji = (value: string) => {
 
 const getVibeText = (value: string) => {
   const vibe = vibes.find(v => v.value === value);
-  return vibe ? vibe.text : 'Any Vibe';
+  return vibe ? vibe.text : 'Go With the Flow';
 };
 
+// Toggle dropdown visibility
+const preferredDropdownRef = ref<HTMLElement | null>(null);
+const blockedDropdownRef = ref<HTMLElement | null>(null);
+
+// Update dropdown positions
+const updateDropdownPosition = () => {
+  nextTick(() => {
+    const preferredDropdownRect = preferredDropdownRef.value?.getBoundingClientRect();
+    const blockedDropdownRect = blockedDropdownRef.value?.getBoundingClientRect();
+    
+    const preferredOuter = document.querySelector('.preferred-outer') as HTMLElement;
+    const blockedOuter = document.querySelector('.blocked-outer') as HTMLElement;
+    
+    if (preferredDropdownRect && preferredOuter) {
+      preferredOuter.style.left = `${preferredDropdownRect.left}px`;
+      preferredOuter.style.top = `${preferredDropdownRect.bottom + 5}px`;
+      preferredOuter.style.width = `${preferredDropdownRect.width}px`;
+    }
+    
+    if (blockedDropdownRect && blockedOuter) {
+      blockedOuter.style.left = `${blockedDropdownRect.left}px`;
+      blockedOuter.style.top = `${blockedDropdownRect.bottom + 5}px`;
+      blockedOuter.style.width = `${blockedDropdownRect.width}px`;
+    }
+  });
+};
+
+const togglePreferredDropdown = () => {
+  showPreferredDropdown.value = !showPreferredDropdown.value;
+  if (showPreferredDropdown.value) {
+    showBlockedDropdown.value = false;
+    updateDropdownPosition();
+  }
+};
+
+const toggleBlockedDropdown = () => {
+  showBlockedDropdown.value = !showBlockedDropdown.value;
+  if (showBlockedDropdown.value) {
+    showPreferredDropdown.value = false;
+    updateDropdownPosition();
+  }
+};
+
+// Save and load filter settings
+const saveFilterSettings = () => {
+  // Save to localStorage for persistence
+  localStorage.setItem('preferredCountries', JSON.stringify(preferredCountries.value));
+  localStorage.setItem('blockedCountries', JSON.stringify(blockedCountries.value));
+};
+
+const loadFilterSettings = () => {
+  try {
+    const savedPreferred = localStorage.getItem('preferredCountries');
+    const savedBlocked = localStorage.getItem('blockedCountries');
+    
+    if (savedPreferred) {
+      preferredCountries.value = JSON.parse(savedPreferred);
+    }
+    
+    if (savedBlocked) {
+      blockedCountries.value = JSON.parse(savedBlocked);
+    }
+  } catch (error) {
+    console.error('Error loading filter settings:', error);
+  }
+};
+
+const restartMatching = () => {
+  if (socket.value && isConnected.value) {
+    socket.value.emit('startMatching', {
+      preferredCountries: preferredCountries.value.length > 0 ? preferredCountries.value : null,
+      blockedCountries: blockedCountries.value
+    });
+  }
+};
+
+// Watch connection status changes
+watch(connectionStatus, (newStatus) => {
+  console.log(`Connection status changed to: ${newStatus}`);
+  
+  // Set up connection monitoring when connected
+  if (newStatus === 'connected') {
+    // Clear existing interval if any
+    if (connectionCheckInterval) {
+      clearInterval(connectionCheckInterval);
+    }
+    
+    // Create new interval that checks connection health
+    connectionCheckInterval = setInterval(() => {
+      // If we have a partner ID but no active WebRTC connection, something is wrong
+      if (partnerId.value && webRTCConnectionState.value !== 'connected') {
+        console.log('Connection health check: WebRTC not connected but partnerId exists');
+        
+        // Check how long the connection has been in a non-connected state
+        if (['failed', 'closed', 'disconnected'].includes(webRTCConnectionState.value)) {
+          console.log('Connection appears to be broken - resetting UI state');
+          connectionStatus.value = 'disconnected';
+          partnerId.value = null;
+          partnerInfo.value = null;
+        }
+      }
+    }, 2000); // Check every 2 seconds
+  } else if (newStatus === 'disconnected') {
+    // Clear the interval when disconnected
+    if (connectionCheckInterval) {
+      clearInterval(connectionCheckInterval);
+      connectionCheckInterval = null;
+    }
+  }
+});
+
 // Socket event setup
-onMounted(async () => {
+onMounted(() => {
   console.log('Home view mounted');
+  
+  // Load countries list
+  loadCountries();
+  
+  // Load saved preferences
+  try {
+    const savedPreferredCountries = localStorage.getItem('preferredCountries');
+    const savedBlockedCountries = localStorage.getItem('blockedCountries');
+    
+    if (savedPreferredCountries) {
+      preferredCountries.value = JSON.parse(savedPreferredCountries);
+    }
+    
+    if (savedBlockedCountries) {
+      blockedCountries.value = JSON.parse(savedBlockedCountries);
+    }
+  } catch (error) {
+    console.error('Error loading saved preferences:', error);
+  }
   
   // Set up socket.io event listeners
   if (socket.value) {
+    // Listen for user location data from server
+    socket.value.on('user-location', (locationData: any) => {
+      console.log('Received user location:', locationData);
+      
+      // تأكد من أن البيانات صحيحة وكاملة
+      if (locationData && locationData.countryCode && locationData.country) {
+        userLocation.value = locationData;
+        
+        // إضافة البلد تلقائياً إلى قائمة البلدان المفضلة إذا لم يكن المستخدم قد اختار أي بلد
+        if (preferredCountries.value.length === 0 && locationData.countryCode !== 'unknown' && locationData.countryCode !== 'earth') {
+          console.log(`Adding user's country ${locationData.country} (${locationData.countryCode}) to preferred countries`);
+          preferredCountries.value.push(locationData.countryCode);
+          
+          // حفظ الإعدادات
+          saveFilterSettings();
+        }
+        
+        // إعلام المستخدم بالبلد المكتشف
+        console.log(`Your location: ${locationData.flag} ${locationData.country}`);
+      } else {
+        console.warn('Received incomplete location data:', locationData);
+      }
+    });
+
     socket.value.on('online-count', (count: number) => {
       onlineCount.value = count;
     });
@@ -672,7 +885,8 @@ onMounted(async () => {
       partnerId.value = data.partnerId;
       partnerInfo.value = {
         id: data.partnerId,
-        country: data.country || 'Unknown',
+        country: data.country || 'Earth',
+        countryCode: data.countryCode || 'unknown',
         flag: data.flag || '🌍',
         vibe: data.vibe || 'any'
       };
@@ -689,8 +903,6 @@ onMounted(async () => {
       if (callHistory.value.length > 3) {
         callHistory.value = callHistory.value.slice(0, 3);
       }
-      
-      console.log('Partner matched:', data);
       
       // Start WebRTC connection immediately without delay
       if (data.partnerId) {
@@ -712,18 +924,48 @@ onMounted(async () => {
       console.log('Direct connection established:', data);
       connectionStatus.value = 'connected';
       partnerId.value = data.partnerId;
-      partnerInfo.value = {
-        id: data.partnerId,
-        country: data.country || 'Unknown',
-        flag: data.flag || '🌍'
-      };
+              partnerInfo.value = {
+          id: data.partnerId,
+          country: data.country || 'Earth',
+          countryCode: data.countryCode || 'unknown',
+          flag: data.flag || '🌍'
+        };
     });
     
-    socket.value.on('partner-disconnected', () => {
+    socket.value.on('partner-disconnected', (data: any = {}) => {
+      console.log('Partner disconnected event received:', data);
+      
+      // Close WebRTC connection to ensure all media tracks are stopped
+      closeConnection();
+      
+      // Update UI state
       connectionStatus.value = 'disconnected';
       partnerId.value = null;
       partnerInfo.value = null;
       chatMessages.value = [];
+      
+      // Show a notification based on the reason for disconnection
+      let disconnectReason = '';
+      if (data && data.reason) {
+        switch (data.reason) {
+          case 'user-initiated':
+            disconnectReason = 'الطرف الآخر أنهى المحادثة';
+            break;
+          case 'connection-lost':
+            disconnectReason = 'انقطع اتصال الطرف الآخر';
+            break;
+          default:
+            disconnectReason = 'انتهت المحادثة';
+        }
+        
+        // Display a temporary notification
+        connectionError.value = disconnectReason;
+        setTimeout(() => {
+          if (connectionError.value === disconnectReason) {
+            connectionError.value = '';
+          }
+        }, 5000);
+      }
       
       // If auto-reconnect is enabled, find a new partner
       if (autoReconnect.value) {
@@ -759,12 +1001,23 @@ onMounted(async () => {
     socket.value.emit('get-online-count');
   }
 
-  document.addEventListener('click', handleOutsideClick);
+  document.addEventListener('click', handleClickOutside);
+  window.addEventListener('resize', updateDropdownPosition);
+  document.addEventListener('scroll', updateDropdownPosition, true);
+  
+  // Check localStorage for saved filters
+  loadFilterSettings();
 });
 
 onBeforeUnmount(() => {
   console.log('Home view unmounting, cleaning up connection');
   closeConnection();
+  
+  // Clear connection check interval
+  if (connectionCheckInterval) {
+    clearInterval(connectionCheckInterval);
+    connectionCheckInterval = null;
+  }
   
   // Remove event listeners
   if (socket.value) {
@@ -779,7 +1032,9 @@ onBeforeUnmount(() => {
     socket.value.off('ice-candidate');
   }
 
-  document.removeEventListener('click', handleOutsideClick);
+  document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', updateDropdownPosition);
+  document.removeEventListener('scroll', updateDropdownPosition, true);
 });
 
 // WebRTC handling methods
@@ -843,10 +1098,32 @@ watch(webRTCConnectionState, (newState, oldState) => {
 // Close dropdown when clicking outside
 const vibeDropdownRef = ref<HTMLElement | null>(null);
 
-const handleOutsideClick = (event: MouseEvent) => {
+const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
+  
   if (vibeDropdownRef.value && !vibeDropdownRef.value.contains(target)) {
     showVibeDropdown.value = false;
+  }
+
+  // Close country dropdown menus
+  if (showPreferredDropdown.value) {
+    const preferredBtn = preferredDropdownRef.value;
+    const preferredDropdown = document.querySelector('.preferred-outer');
+    if (preferredBtn && preferredDropdown && 
+        !preferredBtn.contains(target) && 
+        !preferredDropdown.contains(target)) {
+      showPreferredDropdown.value = false;
+    }
+  }
+  
+  if (showBlockedDropdown.value) {
+    const blockedBtn = blockedDropdownRef.value;
+    const blockedDropdown = document.querySelector('.blocked-outer');
+    if (blockedBtn && blockedDropdown && 
+        !blockedBtn.contains(target) && 
+        !blockedDropdown.contains(target)) {
+      showBlockedDropdown.value = false;
+    }
   }
 };
 </script>
@@ -872,5 +1149,49 @@ const handleOutsideClick = (event: MouseEvent) => {
 
 .delay-2000 {
   animation-delay: 2s;
+}
+
+/* Hide scrollbar but allow scrolling */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari, Opera */
+}
+
+/* Thin scrollbar style */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+
+/* Flag icon styling */
+.flag-icon {
+  display: inline-block;
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.dropdown-outer {
+  min-width: 300px; /* عرض ثابت أكبر */
+  width: max-content;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  animation: fadeIn 0.2s ease-out;
+  border-radius: 0.5rem;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style> 

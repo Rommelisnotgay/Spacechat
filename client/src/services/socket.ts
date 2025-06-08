@@ -18,6 +18,7 @@ const getApiUrl = () => {
 const socket = ref<Socket | null>(null);
 const userId = ref<string | null>(null);
 const isConnected = ref(false);
+let pingInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Socket service for managing real-time connections
@@ -35,12 +36,22 @@ export function useSocket() {
     if (socket.value) {
       cleanupSocketListeners();
     }
+    
+    // Clear ping interval
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
   });
 
   // Initialize the socket connection
   function initializeSocket() {
     const apiUrl = getApiUrl();
     console.log(`Connecting to socket server at: ${apiUrl}`);
+    
+    // Try to get previously stored user ID
+    const storedUserId = localStorage.getItem('spacechat_user_id');
+    console.log('Retrieved stored user ID:', storedUserId);
     
     // Connect to socket.io server
     socket.value = io(apiUrl, {
@@ -54,6 +65,8 @@ export function useSocket() {
       extraHeaders: {
         'X-Client-Version': '1.0.0', // Helps identify client versions for debugging
       },
+      // Add stored user ID in query params for immediate identification
+      query: storedUserId ? { userId: storedUserId } : undefined,
       // Path settings - uncomment if needed for specific server setup
       // path: '/socket.io/',
       forceNew: false, // Reuse existing connection if possible
@@ -63,6 +76,24 @@ export function useSocket() {
     });
 
     setupSocketListeners();
+    
+    // Setup ping/pong to keep connection alive and updating last seen time
+    startPingInterval();
+  }
+  
+  // Setup ping interval
+  function startPingInterval() {
+    // Clear existing interval if any
+    if (pingInterval) {
+      clearInterval(pingInterval);
+    }
+    
+    // Start new interval - ping every 30 seconds
+    pingInterval = setInterval(() => {
+      if (socket.value && isConnected.value) {
+        socket.value.emit('ping');
+      }
+    }, 30000);
   }
 
   // Set up all socket event listeners
@@ -74,10 +105,18 @@ export function useSocket() {
       console.log('Socket connected');
       isConnected.value = true;
       
+      // Get stored user ID from localStorage if available
+      const storedUserId = localStorage.getItem('spacechat_user_id');
+      
       // Get user ID from the server after connecting
-      socket.value?.emit('user:identify', {}, (id: string) => {
-        console.log('Identified with server, user ID:', id);
-        userId.value = id;
+      socket.value?.emit('user:identify', 
+        { prevUserId: storedUserId || undefined }, 
+        (id: string) => {
+          console.log('Identified with server, user ID:', id);
+          userId.value = id;
+          
+          // Store user ID in localStorage for reconnection
+          localStorage.setItem('spacechat_user_id', id);
       });
       
       // Request online count update
@@ -94,10 +133,16 @@ export function useSocket() {
       isConnected.value = true;
       
       // Re-identify with the server and refresh state
-      if (userId.value) {
-        socket.value?.emit('user:identify', { prevUserId: userId.value }, (id: string) => {
+      const storedUserId = localStorage.getItem('spacechat_user_id');
+      if (storedUserId) {
+        socket.value?.emit('user:identify', { prevUserId: storedUserId }, (id: string) => {
           console.log('Re-identified with server after reconnection, user ID:', id);
           userId.value = id;
+          
+          // Update stored ID if different
+          if (id !== storedUserId) {
+            localStorage.setItem('spacechat_user_id', id);
+          }
           
           // Re-request online count
           socket.value?.emit('get-online-count');
@@ -130,10 +175,17 @@ export function useSocket() {
       console.error('Socket error:', error);
     });
     
+    // Handle pong response
+    socket.value.on('pong', () => {
+      // Connection is active, nothing to do
+    });
+    
     // Handle user ID from server
     socket.value.on('user-id', (id: string) => {
       console.log('Received user ID from server:', id);
       userId.value = id;
+      // Store user ID in localStorage for reconnection
+      localStorage.setItem('spacechat_user_id', id);
     });
   }
 
@@ -149,6 +201,7 @@ export function useSocket() {
     socket.value.off('reconnect_failed');
     socket.value.off('error');
     socket.value.off('user-id');
+    socket.value.off('pong');
   }
 
   // Force reconnection

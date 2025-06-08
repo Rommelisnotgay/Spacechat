@@ -397,35 +397,31 @@ export function useWebRTC() {
           // Start collecting stats for debugging
           startStatsCollection();
           
-          updateGlobalState('connected');
-        } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
-          if (pc.iceConnectionState === 'failed') {
-            failureReason = 'ICE connection failed';
-            console.error('[WebRTC] ICE Connection failed');
+        } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+          updateGlobalState(pc.iceConnectionState);
+          
+          if (DEBUG) console.log('[WebRTC] ICE Connection terminated:', pc.iceConnectionState);
+          
+          // If we have a partner ID and socket, notify them of connection state change
+          if (globalPartnerId.value && socket.value) {
+            socket.value.emit('webrtc-connection-state', { 
+              to: globalPartnerId.value, 
+              state: pc.iceConnectionState,
+              reason: 'ice-connection-state-change'
+            });
           }
           
-          if (pc.iceConnectionState !== 'closed') {
-            // Attempt recovery if we're not explicitly closed
-            // Don't attempt recovery if we're already trying to restart
-            if (!isRestartingIce && connectionRetryCount < MAX_CONNECTION_RETRIES) {
-              console.log(`[WebRTC] Attempting ICE restart, attempt ${connectionRetryCount + 1} of ${MAX_CONNECTION_RETRIES}`);
-              attemptConnectionRecovery();
-            } else if (connectionRetryCount >= MAX_CONNECTION_RETRIES) {
-              console.error('[WebRTC] Max connection retry attempts reached, giving up');
-              updateGlobalState('failed');
-              
-              // Force a new connection instead of trying to recover this one
-              connectionRetryCount = 0;
-              failureReason = 'Max retries reached, connection failed';
-              closeConnection();
-            }
-        } else {
-            updateGlobalState('closed');
+          // If the connection has failed or closed, update global state after a short delay
+          // This gives time for any recovery mechanisms to kick in
+          if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+            setTimeout(() => {
+              // Only update if we're still in bad state
+              if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+                updateGlobalState('failed');
+              }
+            }, 2000);
           }
         }
-
-        // Update unified state variable
-        globalConnectionState.value = pc.iceConnectionState;
       };
 
       // ICE candidate events
@@ -1155,22 +1151,11 @@ export function useWebRTC() {
     socket.value.off('partner-disconnected');
     socket.value.off('webrtc-connection-failed');
     socket.value.off('connection-timeout');
-
-    // معالجة أحداث voice-offer و voice-answer القديمة
+    socket.value.off('webrtc-connection-state');
+    
+    // إزالة المستمعين القديمين للأحداث التي لم تعد مستخدمة
     socket.value.off('voice-offer');
     socket.value.off('voice-answer');
-    
-    socket.value.on('voice-offer', async (data: any) => {
-      if (DEBUG) console.log('[WebRTC] Received legacy voice-offer:', data);
-      // تحويل إلى صيغة webrtc-signal الجديدة
-      await handleOffer(data.offer, data.from);
-    });
-    
-    socket.value.on('voice-answer', async (data: any) => {
-      if (DEBUG) console.log('[WebRTC] Received legacy voice-answer:', data);
-      // تحويل إلى صيغة الإجابة الجديدة
-      await handleAnswer(data.answer);
-    });
     
     // التعامل مع إشارة WebRTC (offer, answer)
     socket.value.on('webrtc-signal', async (data: { type: string, offer?: RTCSessionDescriptionInit, answer?: RTCSessionDescriptionInit, from: string }) => {
@@ -1257,20 +1242,54 @@ export function useWebRTC() {
       }
     });
     
-    // إضافة معالج انقطاع الاتصال
-    socket.value.on('partner-disconnected', () => {
-      if (DEBUG) console.log('[WebRTC] Partner disconnected');
+    // استقبال إشعار بانقطاع اتصال الشريك
+    socket.value.on('partner-disconnected', (data: any = {}) => {
+      if (DEBUG) console.log('[WebRTC] Partner disconnected event:', data);
       
-      // إغلاق الاتصال
+      // إغلاق اتصال WebRTC
       closeConnection();
       
-      // إعادة ضبط المتغيرات
+      // إيقاف كافة المراقبات والإعدادات
+      stopConnectionHeartbeat();
+      stopConnectionMonitoring();
+      stopStatsCollection();
+      
+      // إعادة تعيين المعرفات
       globalPartnerId.value = null;
       partnerId.value = null;
+      
+      // تحديث الحالة
       globalConnectionState.value = 'closed';
-      isNegotiating = false;
-      isRestartingIce = false;
-      connectionRetryCount = 0;
+      connectionState.value = 'closed';
+      
+      if (DEBUG) {
+        if (data && data.reason) {
+          console.log(`[WebRTC] Disconnection reason: ${data.reason}`);
+        }
+        console.log('[WebRTC] WebRTC connection fully closed due to partner disconnection');
+      }
+    });
+    
+    // Handle WebRTC connection state changes from other party
+    socket.value.on('webrtc-connection-state', (data: { state: string, from: string, reason: string }) => {
+      if (DEBUG) console.log(`[WebRTC] Received connection state update from partner: ${data.state} (reason: ${data.reason})`);
+      
+      // If we received a notification that the other party's connection is broken
+      if (data.state === 'failed' || data.state === 'closed' || data.state === 'disconnected') {
+        // Update our own state
+        if (data.state === 'failed' || data.state === 'closed') {
+          updateGlobalState('failed');
+          
+          // Close our local connection if it's still open
+          if (globalPeerConnection && globalPeerConnection.connectionState !== 'closed') {
+            console.log('[WebRTC] Closing local connection due to remote state:', data.state);
+            closeConnection();
+          }
+        } else {
+          // Just log for disconnected state, might recover
+          console.log('[WebRTC] Partner connection state is disconnected, waiting to see if it recovers');
+        }
+      }
     });
   }
   

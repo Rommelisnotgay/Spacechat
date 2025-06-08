@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { setupSignalingEvents } from './socket/signaling';
 import { setupChatEvents } from './socket/chat';
 import { setupGameEvents } from './socket/games';
+import { getLocationFromIp, getAllCountries, GeoLocation } from './services/geo-location';
 
 // Get the allowed origins for CORS
 const getAllowedOrigins = () => {
@@ -59,6 +60,11 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// API endpoint to get all available countries
+app.get('/api/countries', (req, res) => {
+  res.json(getAllCountries());
+});
+
 // Serve static files from the client's dist folder in production
 if (process.env.NODE_ENV === 'production') {
   const path = require('path');
@@ -87,6 +93,7 @@ type UserInfo = {
   vibe?: string;
   preferences?: Record<string, any>;
   nickname?: string;
+  location?: GeoLocation;
 };
 
 const activeUsers = new Map<string, UserInfo>();
@@ -112,6 +119,52 @@ const queueRateLimits = new Map<string, RateLimitInfo>();
 const RATE_LIMIT_WINDOW = 60000; // 1 minute window
 const MAX_JOINS_PER_WINDOW = 10; // Max 10 joins per minute
 
+// User storage
+const userLastSeen = new Map<string, number>(); // Track when users were last active
+
+// Setup periodic checks for inactive users
+const USER_TIMEOUT = 70000; // 70 seconds - slightly longer than client ping interval
+setInterval(() => {
+  const now = Date.now();
+  let removedCount = 0;
+  
+  // Check for timed out users
+  for (const [userId, lastSeen] of userLastSeen.entries()) {
+    if (now - lastSeen > USER_TIMEOUT) {
+      console.log(`User ${userId} timed out after inactivity`);
+      
+      // Get user info
+      const userInfo = activeUsers.get(userId);
+      if (userInfo) {
+        // Notify partner if connected
+        const socket = io.sockets.sockets.get(userInfo.socketId);
+        if (socket && socket.data.partnerId) {
+          const partnerInfo = activeUsers.get(socket.data.partnerId);
+          if (partnerInfo) {
+            io.to(partnerInfo.socketId).emit('partner-disconnected');
+          }
+        }
+        
+        // Remove from active users
+        activeUsers.delete(userId);
+        removedCount++;
+        
+        // Remove from queue if present
+        removeUserFromQueue(userId);
+        
+        // Remove from last seen tracking
+        userLastSeen.delete(userId);
+      }
+    }
+  }
+  
+  // Update online count if we removed any users
+  if (removedCount > 0) {
+    console.log(`Cleaned up ${removedCount} inactive users. Active users: ${activeUsers.size}`);
+    io.emit('online-count', activeUsers.size);
+  }
+}, 30000); // Check every 30 seconds
+
 // Routes
 app.get('/', (req: Request, res: Response) => {
   res.send('SpaceChat.live Server is running');
@@ -126,23 +179,95 @@ app.get('/api/stats', (req, res) => {
 
 // Socket.io connection handler
 io.on('connection', (socket) => {
-  // Assign a user ID
-  const userId = uuidv4();
+  // Check if the client sent a userId in the query parameters
+  const queryUserId = socket.handshake.query.userId as string | undefined;
+  let isReconnection = false;
+  
+  // Assign a user ID - either from query or generate new one
+  let userId: string;
+  
+  // If we have a userId in query and it exists in our active users
+  if (queryUserId && activeUsers.has(queryUserId)) {
+    userId = queryUserId;
+    isReconnection = true;
+    console.log(`User reconnected with ID from query: ${userId}`);
+    
+    // Update the socket ID for this user
+    const userInfo = activeUsers.get(userId);
+    if (userInfo) {
+      userInfo.socketId = socket.id;
+      activeUsers.set(userId, userInfo);
+    }
+  } else {
+    // Generate new UUID for this user
+    userId = uuidv4();
+    console.log(`New user connected: ${userId}`);
+  }
+  
+  // Add user ID to socket data
   socket.data.userId = userId;
   
-  console.log(`User connected: ${userId}`);
+  // Update last seen time
+  userLastSeen.set(userId, Date.now());
   
-  // Add to active users
-  activeUsers.set(userId, {
-    socketId: socket.id,
-    nickname: `User_${userId.substring(0, 5)}`
-  });
-  
-  // Send user ID to client
-  socket.emit('user-id', userId);
-  
-  // Send online count to all clients
-  io.emit('online-count', activeUsers.size);
+  // Only perform location detection for new users
+  if (!isReconnection) {
+    // Get user's IP address
+    const ipAddress = socket.handshake.headers['x-forwarded-for'] || 
+                     socket.handshake.address || 
+                     'unknown';
+    
+    // Detect user's country based on IP
+    getLocationFromIp(String(ipAddress))
+      .then(locationData => {
+        // Add to active users with location data
+        activeUsers.set(userId, {
+          socketId: socket.id,
+          nickname: `User_${userId.substring(0, 5)}`,
+          location: locationData || undefined
+        });
+        
+        // Send location data to the client
+        if (locationData) {
+          socket.emit('user-location', locationData);
+          console.log(`User ${userId} location detected: ${locationData.country} (${locationData.countryCode}) with flag: ${locationData.flag}`);
+        } else {
+          console.log(`Unable to detect location for user ${userId}`);
+          // Send a fallback location for local development
+          socket.emit('user-location', {
+            country: 'Earth',
+            countryCode: 'earth',
+            flag: '🌍'
+          });
+        }
+      })
+      .catch(error => {
+        console.error(`Failed to get location for user ${userId}:`, error);
+        // Add to active users without location data
+        activeUsers.set(userId, {
+          socketId: socket.id,
+          nickname: `User_${userId.substring(0, 5)}`
+        });
+        
+        // Send a fallback location
+        socket.emit('user-location', {
+          country: 'Earth',
+          countryCode: 'earth',
+          flag: '🌍'
+        });
+      })
+      .finally(() => {
+        // Send user ID to client
+        socket.emit('user-id', userId);
+        
+        // Send online count to all clients
+        io.emit('online-count', activeUsers.size);
+      });
+  } else {
+    // For reconnection, just send the ID and online count
+    socket.emit('user-id', userId);
+    io.emit('online-count', activeUsers.size);
+  }
   
   // Handle get online count request
   socket.on('get-online-count', () => {
@@ -198,26 +323,29 @@ io.on('connection', (socket) => {
     // Add user info to activeUsers map if not already present
     const userInfo = activeUsers.get(userId) || { socketId: socket.id };
     
-    // Update user info with received data
-    if (data.preferences) {
-      userInfo.preferences = data.preferences;
+    // Merge location data with preferences if available
+    if (userInfo.location && (!data.preferences || !data.preferences.preferredCountries || data.preferences.preferredCountries.length === 0)) {
+      if (!data.preferences) {
+        data.preferences = {};
+      }
+      data.preferences.userCountry = userInfo.location.countryCode;
     }
     
-    // Update active users map
+    // Update user preferences in active users map
+    userInfo.vibe = data.vibe || 'any';
+    userInfo.preferences = data.preferences;
     activeUsers.set(userId, userInfo);
     
-    // Add to queue
+    // Add the user to the queue
     userQueue.push({
-      userId,
+      userId: userId,
       vibe: data.vibe || 'any',
       joinTime: Date.now(),
       preferences: data.preferences
     });
     
-    console.log(`User ${userId} joined queue with vibe: ${data.vibe || 'any'}`);
-    
-    // Try to match users
-    matchUsers();
+    // Try to match users after a short delay
+    setTimeout(matchUsers, 500);
   });
   
   // Disconnect from partner
@@ -243,18 +371,28 @@ io.on('connection', (socket) => {
       const partnerSocketId = partnerInfo.socketId;
       const partnerSocket = io.sockets.sockets.get(partnerSocketId);
       
-      if (partnerSocket && partnerSocket.data.partnerId === userId) {
+      if (partnerSocket) {
         // Reset partner connection
         partnerSocket.data.partnerId = null;
         
-        // Notify partner
-        io.to(partnerSocketId).emit('partner-disconnected');
-        console.log(`Notified partner ${partnerId} of disconnection`);
+        // Notify partner with more details for better debugging
+        console.log(`Notifying partner ${partnerId} about disconnection from ${userId}`);
+        io.to(partnerSocketId).emit('partner-disconnected', { 
+          reason: 'user-initiated',
+          userId: userId
+        });
+      } else {
+        console.log(`Partner socket not found for ID ${partnerId}`);
       }
+    } else {
+      console.log(`Partner info not found for ID ${partnerId}`);
     }
     
     // Make sure user is not in queue
     removeUserFromQueue(userId);
+    
+    // Confirm to user that partner connection has ended
+    socket.emit('disconnect-confirmed');
   });
   
   // Connect to specific user
@@ -297,28 +435,56 @@ io.on('connection', (socket) => {
     
     // Notify partner if connected
     if (socket.data.partnerId) {
-      const partnerInfo = activeUsers.get(socket.data.partnerId);
+      const partnerId = socket.data.partnerId;
+      const partnerInfo = activeUsers.get(partnerId);
+      
       if (partnerInfo) {
-        io.to(partnerInfo.socketId).emit('partner-disconnected');
+        console.log(`Notifying partner ${partnerId} about disconnection from ${userId}`);
+        
+        // Emit a more descriptive event with reason
+        io.to(partnerInfo.socketId).emit('partner-disconnected', {
+          reason: 'connection-lost',
+          userId: userId
+        });
+        
+        // Also reset the partner's connection
+        const partnerSocket = io.sockets.sockets.get(partnerInfo.socketId);
+        if (partnerSocket) {
+          partnerSocket.data.partnerId = null;
+        }
       }
     }
     
-    // Remove from active users
-    activeUsers.delete(userId);
+    // Keep the user in the activeUsers map for a short period
+    // to handle page refresh events more gracefully
+    // Instead of deleting immediately, we'll let the cleanup task handle it
     
     // Remove from queue if present
     removeUserFromQueue(userId);
     
-    // Update online count
-    io.emit('online-count', activeUsers.size);
+    // Mark the user as potentially inactive but don't remove yet
+    // The cleanup task will handle removal after timeout
+  });
+
+  // Handle ping to keep connection alive
+  socket.on('ping', () => {
+    const userId = socket.data.userId;
+    if (userId) {
+      // Update last seen time
+      userLastSeen.set(userId, Date.now());
+      socket.emit('pong');
+    }
   });
 
   // Add event handler for user identification
   socket.on('user:identify', (data: { prevUserId?: string }, callback: (userId: string) => void) => {
     const currentUserId = socket.data.userId;
     
-    // If the client is providing a previous user ID, try to restore that identity
-    if (data.prevUserId && activeUsers.has(data.prevUserId)) {
+    // Update last seen time
+    userLastSeen.set(currentUserId, Date.now());
+    
+    // If the client is providing a previous user ID and it's different from current
+    if (data.prevUserId && data.prevUserId !== currentUserId && activeUsers.has(data.prevUserId)) {
       // Update the user ID mapping
       const prevUserInfo = activeUsers.get(data.prevUserId);
       
@@ -335,6 +501,9 @@ io.on('connection', (socket) => {
         // Update socket data
         socket.data.userId = data.prevUserId;
         
+        // Update last seen for this user ID
+        userLastSeen.set(data.prevUserId, Date.now());
+        
         console.log(`Reconnected user with previous ID: ${data.prevUserId}`);
         
         // Return the previous user ID
@@ -346,7 +515,12 @@ io.on('connection', (socket) => {
       }
     }
     
-    // If no previous ID or user not found, just return the current ID
+    // If we're already using the previous ID, just confirm it
+    if (data.prevUserId && data.prevUserId === currentUserId) {
+      console.log(`User already using the correct ID: ${currentUserId}`);
+    }
+    
+    // Return the current ID
     callback(currentUserId);
   });
 
@@ -395,6 +569,50 @@ io.on('connection', (socket) => {
       });
     } else {
       console.log(`Cannot forward ICE candidate: target user ${data.to} not found`);
+    }
+  });
+  
+  // Handle WebRTC connection state changes
+  socket.on('webrtc-connection-state', (data: { to: string, state: string, reason: string }) => {
+    const userId = socket.data.userId;
+    const targetUserInfo = activeUsers.get(data.to);
+    
+    console.log(`WebRTC connection state changed for ${userId}: ${data.state} (reason: ${data.reason})`);
+    
+    // If the connection has failed or closed, notify the other user
+    if (data.state === 'failed' || data.state === 'closed' || data.state === 'disconnected') {
+      if (targetUserInfo) {
+        console.log(`Notifying user ${data.to} about WebRTC connection state change: ${data.state}`);
+        io.to(targetUserInfo.socketId).emit('webrtc-connection-state', {
+          state: data.state,
+          from: userId,
+          reason: data.reason
+        });
+        
+        // For failed or closed states, also send the partner-disconnected event
+        // This ensures the UI is updated correctly
+        if (data.state === 'failed' || data.state === 'closed') {
+          console.log(`Sending partner-disconnected event to ${data.to} due to WebRTC state: ${data.state}`);
+          io.to(targetUserInfo.socketId).emit('partner-disconnected', {
+            reason: 'connection-failed',
+            userId: userId
+          });
+          
+          // Also update the connection state on the server
+          const sourceSocket = io.sockets.sockets.get(socket.id);
+          const targetSocket = io.sockets.sockets.get(targetUserInfo.socketId);
+          
+          if (sourceSocket) {
+            sourceSocket.data.partnerId = null;
+          }
+          
+          if (targetSocket && targetSocket.data.partnerId === userId) {
+            targetSocket.data.partnerId = null;
+          }
+        }
+      } else {
+        console.log(`Cannot notify about WebRTC state: target user ${data.to} not found`);
+      }
     }
   });
 });
@@ -458,41 +676,43 @@ function matchUsers() {
           if (socket1) socket1.data.partnerId = user2.userId;
           if (socket2) socket2.data.partnerId = user1.userId;
           
-          // Get country information from preferences
-          const country1 = user1.preferences?.preferredCountries?.[0] || 'unknown';
-          const country2 = user2.preferences?.preferredCountries?.[0] || 'unknown';
+          // Get country information - preferably from location data
+          const user1Country = user1Info.location?.countryCode || 
+                              user1.preferences?.userCountry || 
+                              user1.preferences?.preferredCountries?.[0] || 
+                              'unknown';
+                              
+          const user2Country = user2Info.location?.countryCode || 
+                              user2.preferences?.userCountry || 
+                              user2.preferences?.preferredCountries?.[0] || 
+                              'unknown';
 
-          // Create flag emojis based on country codes or defaults
-          const getFlag = (country: string) => {
-            if (country === 'unknown' || country === 'any') return '🌍';
-            // If the country code is 2 letters, convert to regional indicator symbols
-            if (/^[a-z]{2}$/i.test(country)) {
-              return String.fromCodePoint(
-                ...country.toLowerCase().split('').map(c => c.charCodeAt(0) + 127397)
-              );
-            }
-            return '🌍';
-          };
+          // Use detected flags or get flag from country code
+          const flag1 = user1Info.location?.flag || getFlag(user1Country);
+          const flag2 = user2Info.location?.flag || getFlag(user2Country);
+          
+          // Get country names
+          const country1Name = user1Info.location?.country || getCountryName(user1Country);
+          const country2Name = user2Info.location?.country || getCountryName(user2Country);
 
-          const flag1 = getFlag(country1);
-          const flag2 = getFlag(country2);
-
-          // Notify both users with 'matched' event (changed from 'partner-matched')
+          // Notify both users with 'matched' event
           io.to(user1Info.socketId).emit('matched', { 
             partnerId: user2.userId,
             vibe: user2.vibe,
-            country: country2 === 'unknown' ? 'Earth' : country2.toUpperCase(),
+            country: user2Country === 'unknown' ? 'Earth' : country2Name,
+            countryCode: user2Country,
             flag: flag2
           });
           
           io.to(user2Info.socketId).emit('matched', { 
             partnerId: user1.userId,
             vibe: user1.vibe,
-            country: country1 === 'unknown' ? 'Earth' : country1.toUpperCase(),
+            country: user1Country === 'unknown' ? 'Earth' : country1Name,
+            countryCode: user1Country,
             flag: flag1
           });
           
-          console.log(`Matched users: ${user1.userId} and ${user2.userId} with vibe: ${user1.vibe}/${user2.vibe}`);
+          console.log(`Matched users: ${user1.userId} (${country1Name}, ${flag1}) and ${user2.userId} (${country2Name}, ${flag2}) with vibe: ${user1.vibe}/${user2.vibe}`);
           
           // Stop after first match to avoid modifying the queue while we're iterating
           break;
@@ -510,54 +730,81 @@ function matchUsers() {
   }
 }
 
+// Get flag emoji from country code
+function getFlag(country: string): string {
+  if (country === 'unknown' || country === 'any') return '🌍';
+  // If the country code is 2 letters, convert to regional indicator symbols
+  if (/^[a-z]{2}$/i.test(country)) {
+    return String.fromCodePoint(
+      ...country.toLowerCase().split('').map(c => c.charCodeAt(0) + 127397)
+    );
+  }
+  return '🌍';
+}
+
+// Get country name from country code
+function getCountryName(countryCode: string): string {
+  const countries = getAllCountries();
+  const country = countries.find(c => c.value === countryCode.toLowerCase());
+  return country ? country.name : 'Unknown';
+}
+
 // Helper function to check compatibility between users
 function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
-  // Check vibe compatibility
-  const compatibleVibes = 
-    user1.vibe === 'any' || 
-    user2.vibe === 'any' || 
-    user1.vibe === user2.vibe;
+  // تجاهل مطابقة الفايب تماماً - اعتبر أي فايبس متوافقة
+  // const compatibleVibes = 
+  //   user1.vibe === 'any' || 
+  //   user2.vibe === 'any' || 
+  //   user1.vibe === user2.vibe;
   
-  if (!compatibleVibes) return false;
+  // if (!compatibleVibes) return false;
   
   // Check country preferences if specified
   const user1Prefs = user1.preferences || {};
   const user2Prefs = user2.preferences || {};
   
+  // Get user countries (if available)
+  const user1Country = user1Prefs.userCountry || 'unknown';
+  const user2Country = user2Prefs.userCountry || 'unknown';
+  
   // If user1 has blocked user2's country
   if (
+    user2Country !== 'unknown' &&
     user1Prefs.blockedCountries?.length && 
-    user2Prefs.preferredCountries?.length &&
-    user1Prefs.blockedCountries.some((c: string) => 
-      user2Prefs.preferredCountries.includes(c)
-    )
+    user1Prefs.blockedCountries.includes(user2Country)
   ) {
     return false;
   }
   
   // If user2 has blocked user1's country
   if (
+    user1Country !== 'unknown' &&
     user2Prefs.blockedCountries?.length && 
-    user1Prefs.preferredCountries?.length &&
-    user2Prefs.blockedCountries.some((c: string) => 
-      user1Prefs.preferredCountries.includes(c)
-    )
+    user2Prefs.blockedCountries.includes(user1Country)
   ) {
     return false;
   }
   
-  // If both have preferred countries, check for compatibility
+  // If both users have preferred countries, check if user2's country is in user1's preferred list
   if (
     user1Prefs.preferredCountries?.length && 
-    user2Prefs.preferredCountries?.length
+    user2Country !== 'unknown' &&
+    !user1Prefs.preferredCountries.includes(user2Country)
   ) {
-    // If they have at least one common country, they're compatible
-    const hasCommonCountry = user1Prefs.preferredCountries.some(
-      (c: string) => user2Prefs.preferredCountries.includes(c)
-    );
-    
-    // Only enforce this if at least one user has specific preferences
-    if (!hasCommonCountry) {
+    // Only enforce if user has specific preferences
+    if (user1Prefs.preferredCountries.length > 0) {
+      return false;
+    }
+  }
+  
+  // If both users have preferred countries, check if user1's country is in user2's preferred list
+  if (
+    user2Prefs.preferredCountries?.length && 
+    user1Country !== 'unknown' &&
+    !user2Prefs.preferredCountries.includes(user1Country)
+  ) {
+    // Only enforce if user has specific preferences
+    if (user2Prefs.preferredCountries.length > 0) {
       return false;
     }
   }
