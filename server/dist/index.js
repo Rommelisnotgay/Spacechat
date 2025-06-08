@@ -46,9 +46,31 @@ app.use(express_1.default.json());
 if (process.env.NODE_ENV === 'production') {
     const path = require('path');
     app.use(express_1.default.static(path.join(__dirname, '../../client/dist')));
-    // Handle SPA routing
+    // API routes
+    app.get('/api/status', (req, res) => {
+        res.send('SpaceChat.live Server is running');
+    });
+    app.get('/api/stats', (req, res) => {
+        res.json({
+            online: activeUsers.size,
+            inQueue: userQueue.length
+        });
+    });
+    // Handle SPA routing - must be after API routes
     app.get('*', (req, res) => {
         res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
+    });
+}
+else {
+    // Routes for development
+    app.get('/', (req, res) => {
+        res.send('SpaceChat.live Server is running');
+    });
+    app.get('/api/stats', (req, res) => {
+        res.json({
+            online: activeUsers.size,
+            inQueue: userQueue.length
+        });
     });
 }
 const activeUsers = new Map();
