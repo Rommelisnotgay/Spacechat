@@ -17,13 +17,19 @@ const getAllowedOrigins = () => {
         const origins = [
             'https://spacechat-live.up.railway.app',
             'https://spacechat-live.railway.app',
-            'https://spacechat.live'
+            'https://spacechat.live',
+            'https://www.spacechat.live'
         ];
         if (process.env.CLIENT_URL) {
             origins.push(process.env.CLIENT_URL);
         }
+        // Add common vercel deployment URLs
+        if (process.env.VERCEL_URL) {
+            origins.push(`https://${process.env.VERCEL_URL}`);
+        }
         return origins;
     }
+    // For development, allow all origins
     return '*';
 };
 // Initialize Express app
@@ -42,19 +48,20 @@ app.use((0, cors_1.default)({
     credentials: true
 }));
 app.use(express_1.default.json());
+// Define API routes before static file handling
+app.get('/api/stats', (req, res) => {
+    res.json({
+        online: activeUsers.size,
+        inQueue: userQueue.length
+    });
+});
 // Serve static files from the client's dist folder in production
 if (process.env.NODE_ENV === 'production') {
     const path = require('path');
     app.use(express_1.default.static(path.join(__dirname, '../../client/dist')));
-    // API routes
+    // API routes that should work in production
     app.get('/api/status', (req, res) => {
         res.send('SpaceChat.live Server is running');
-    });
-    app.get('/api/stats', (req, res) => {
-        res.json({
-            online: activeUsers.size,
-            inQueue: userQueue.length
-        });
     });
     // Handle SPA routing - must be after API routes
     app.get('*', (req, res) => {
@@ -62,15 +69,9 @@ if (process.env.NODE_ENV === 'production') {
     });
 }
 else {
-    // Routes for development
+    // Routes for development only
     app.get('/', (req, res) => {
         res.send('SpaceChat.live Server is running');
-    });
-    app.get('/api/stats', (req, res) => {
-        res.json({
-            online: activeUsers.size,
-            inQueue: userQueue.length
-        });
     });
 }
 const activeUsers = new Map();

@@ -509,10 +509,27 @@ export function useWebRTC() {
         if (!globalRemoteStream) {
           globalRemoteStream = new MediaStream();
           remoteStream.value = globalRemoteStream;
+          console.log('[WebRTC] Created new remote stream');
         }
         
         // Add the track to the stream
         globalRemoteStream.addTrack(event.track);
+        console.log(`[WebRTC] Added ${event.track.kind} track to remote stream, now has ${globalRemoteStream.getTracks().length} tracks`);
+        
+        // Verify tracks were added properly
+        setTimeout(() => {
+          if (globalRemoteStream) {
+            const tracks = globalRemoteStream.getTracks();
+            console.log(`[WebRTC] Remote stream has ${tracks.length} tracks after adding`);
+            tracks.forEach(track => {
+              console.log(`[WebRTC] Track: ${track.kind}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
+              if (track.kind === 'audio' && (!track.enabled || track.muted)) {
+                console.log('[WebRTC] 🔴 Found disabled or muted audio track, enabling it');
+                track.enabled = true;
+              }
+            });
+          }
+        }, 500);
         
         // Log track stats
         if (DEBUG) {
@@ -522,6 +539,8 @@ export function useWebRTC() {
           
           event.track.onmute = () => {
             console.log('[WebRTC] Track muted:', event.track.kind);
+            // Auto unmute if track gets muted for some reason
+            event.track.enabled = true;
           };
           
           event.track.onended = () => {
@@ -804,6 +823,20 @@ export function useWebRTC() {
       // تعيين الوصف المحلي (الإجابة)
       if (DEBUG) console.log('[WebRTC] Setting local description (answer)');
       await pc.setLocalDescription(answer);
+      
+      // تأكد من أن المستقبلين مكوّنون لاستقبال الصوت
+      pc.getTransceivers().forEach(transceiver => {
+        if (transceiver.receiver.track.kind === 'audio') {
+          console.log('[WebRTC] Ensuring audio transceiver is set to receive');
+          if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'recvonly') {
+            try {
+              transceiver.direction = 'sendrecv';
+            } catch (error) {
+              console.error('[WebRTC] Could not update transceiver direction:', error);
+            }
+          }
+        }
+      });
       
       // انتظار جمع مرشحي ICE
       await waitForIceGatheringComplete(pc);
@@ -1466,6 +1499,9 @@ export function useWebRTC() {
     
     // تحديث معلومات التشخيص
     updateDebugInfo();
+    
+    // فحص وإصلاح مشاكل الاتصال الصوتي
+    diagnoseAndFixAudioIssues();
   }
   
   // استعادة الاتصال بعد انقطاع
