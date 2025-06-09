@@ -10,19 +10,19 @@ COPY package*.json ./
 COPY client/package*.json ./client/
 COPY server/package*.json ./server/
 
-# Install dependencies with production flag to reduce memory usage
-RUN npm install --only=production
-RUN cd client && npm install --only=production
-RUN cd server && npm install --only=production
+# Install ALL dependencies instead of only production
+RUN npm install
+RUN cd client && npm install
+RUN cd server && npm install
 
 # Copy source files
 COPY . .
 
-# Build client with NODE_OPTIONS to limit memory usage
-RUN cd client && NODE_OPTIONS="--max-old-space-size=512" npm run build-only
+# Build client with simpler command and memory limit
+RUN cd client && export NODE_OPTIONS="--max-old-space-size=512" && npm run build
 
 # Build server
-RUN cd server && NODE_OPTIONS="--max-old-space-size=512" npm run build
+RUN cd server && export NODE_OPTIONS="--max-old-space-size=512" && npm run build
 
 # Verify the builds were successful
 RUN ls -la client/dist/ || echo "Client build failed - directory missing"
