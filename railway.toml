@@ -1,10 +1,9 @@
 [build]
 builder = "DOCKERFILE"
-buildCommand = "docker build -t spacechat-live ."
 
 [deploy]
-startCommand = "npm run start:prod"
-healthcheckPath = "/"
+startCommand = "npm run railway:start"
+healthcheckPath = "/api/status"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
