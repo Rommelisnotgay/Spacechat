@@ -411,34 +411,72 @@ const vibes = [
 // Temporary countries list until API is loaded
 const countries = ref<any[]>([
   { value: 'any', label: '🌍 Any Country', name: 'Any Country', flag: '🌍' },
-  { value: 'sa', label: '🇸🇦 Saudi Arabia', name: 'Saudi Arabia', flag: '🇸🇦' },
   { value: 'ae', label: '🇦🇪 UAE', name: 'United Arab Emirates', flag: '🇦🇪' },
-  { value: 'eg', label: '🇪🇬 Egypt', name: 'Egypt', flag: '🇪🇬' },
-  { value: 'us', label: '🇺🇸 USA', name: 'United States', flag: '🇺🇸' },
-  { value: 'gb', label: '🇬🇧 UK', name: 'United Kingdom', flag: '🇬🇧' },
-  { value: 'de', label: '🇩🇪 Germany', name: 'Germany', flag: '🇩🇪' },
-  { value: 'fr', label: '🇫🇷 France', name: 'France', flag: '🇫🇷' },
-  { value: 'ca', label: '🇨🇦 Canada', name: 'Canada', flag: '🇨🇦' },
-  { value: 'au', label: '🇦🇺 Australia', name: 'Australia', flag: '🇦🇺' },
-  { value: 'jp', label: '🇯🇵 Japan', name: 'Japan', flag: '🇯🇵' },
-  { value: 'kr', label: '🇰🇷 Korea', name: 'South Korea', flag: '🇰🇷' },
-  { value: 'cn', label: '🇨🇳 China', name: 'China', flag: '🇨🇳' },
-  { value: 'in', label: '🇮🇳 India', name: 'India', flag: '🇮🇳' },
-  { value: 'br', label: '🇧🇷 Brazil', name: 'Brazil', flag: '🇧🇷' },
-  { value: 'ma', label: '🇲🇦 Morocco', name: 'Morocco', flag: '🇲🇦' },
+  { value: 'af', label: '🇦🇫 Afghanistan', name: 'Afghanistan', flag: '🇦🇫' },
+  { value: 'al', label: '🇦🇱 Albania', name: 'Albania', flag: '🇦🇱' },
   { value: 'dz', label: '🇩🇿 Algeria', name: 'Algeria', flag: '🇩🇿' },
-  { value: 'tn', label: '🇹🇳 Tunisia', name: 'Tunisia', flag: '🇹🇳' },
-  { value: 'ly', label: '🇱🇾 Libya', name: 'Libya', flag: '🇱🇾' },
-  { value: 'jo', label: '🇯🇴 Jordan', name: 'Jordan', flag: '🇯🇴' },
-  { value: 'lb', label: '🇱🇧 Lebanon', name: 'Lebanon', flag: '🇱🇧' },
-  { value: 'kw', label: '🇰🇼 Kuwait', name: 'Kuwait', flag: '🇰🇼' },
+  { value: 'ar', label: '🇦🇷 Argentina', name: 'Argentina', flag: '🇦🇷' },
+  { value: 'au', label: '🇦🇺 Australia', name: 'Australia', flag: '🇦🇺' },
+  { value: 'at', label: '🇦🇹 Austria', name: 'Austria', flag: '🇦🇹' },
   { value: 'bh', label: '🇧🇭 Bahrain', name: 'Bahrain', flag: '🇧🇭' },
-  { value: 'qa', label: '🇶🇦 Qatar', name: 'Qatar', flag: '🇶🇦' },
-  { value: 'om', label: '🇴🇲 Oman', name: 'Oman', flag: '🇴🇲' },
-  { value: 'ye', label: '🇾🇪 Yemen', name: 'Yemen', flag: '🇾🇪' },
+  { value: 'bd', label: '🇧🇩 Bangladesh', name: 'Bangladesh', flag: '🇧🇩' },
+  { value: 'be', label: '🇧🇪 Belgium', name: 'Belgium', flag: '🇧🇪' },
+  { value: 'br', label: '🇧🇷 Brazil', name: 'Brazil', flag: '🇧🇷' },
+  { value: 'ca', label: '🇨🇦 Canada', name: 'Canada', flag: '🇨🇦' },
+  { value: 'cn', label: '🇨🇳 China', name: 'China', flag: '🇨🇳' },
+  { value: 'dk', label: '🇩🇰 Denmark', name: 'Denmark', flag: '🇩🇰' },
+  { value: 'eg', label: '🇪🇬 Egypt', name: 'Egypt', flag: '🇪🇬' },
+  { value: 'fi', label: '🇫🇮 Finland', name: 'Finland', flag: '🇫🇮' },
+  { value: 'fr', label: '🇫🇷 France', name: 'France', flag: '🇫🇷' },
+  { value: 'de', label: '🇩🇪 Germany', name: 'Germany', flag: '🇩🇪' },
+  { value: 'gr', label: '🇬🇷 Greece', name: 'Greece', flag: '🇬🇷' },
+  { value: 'hk', label: '🇭🇰 Hong Kong', name: 'Hong Kong', flag: '🇭🇰' },
+  { value: 'hu', label: '🇭🇺 Hungary', name: 'Hungary', flag: '🇭🇺' },
+  { value: 'in', label: '🇮🇳 India', name: 'India', flag: '🇮🇳' },
+  { value: 'id', label: '🇮🇩 Indonesia', name: 'Indonesia', flag: '🇮🇩' },
+  { value: 'ir', label: '🇮🇷 Iran', name: 'Iran', flag: '🇮🇷' },
   { value: 'iq', label: '🇮🇶 Iraq', name: 'Iraq', flag: '🇮🇶' },
+  { value: 'ie', label: '🇮🇪 Ireland', name: 'Ireland', flag: '🇮🇪' },
+  { value: 'it', label: '🇮🇹 Italy', name: 'Italy', flag: '🇮🇹' },
+  { value: 'jp', label: '🇯🇵 Japan', name: 'Japan', flag: '🇯🇵' },
+  { value: 'jo', label: '🇯🇴 Jordan', name: 'Jordan', flag: '🇯🇴' },
+  { value: 'kz', label: '🇰🇿 Kazakhstan', name: 'Kazakhstan', flag: '🇰🇿' },
+  { value: 'kr', label: '🇰🇷 Korea', name: 'South Korea', flag: '🇰🇷' },
+  { value: 'kw', label: '🇰🇼 Kuwait', name: 'Kuwait', flag: '🇰🇼' },
+  { value: 'lb', label: '🇱🇧 Lebanon', name: 'Lebanon', flag: '🇱🇧' },
+  { value: 'ly', label: '🇱🇾 Libya', name: 'Libya', flag: '🇱🇾' },
+  { value: 'my', label: '🇲🇾 Malaysia', name: 'Malaysia', flag: '🇲🇾' },
+  { value: 'mx', label: '🇲🇽 Mexico', name: 'Mexico', flag: '🇲🇽' },
+  { value: 'ma', label: '🇲🇦 Morocco', name: 'Morocco', flag: '🇲🇦' },
+  { value: 'nl', label: '🇳🇱 Netherlands', name: 'Netherlands', flag: '🇳🇱' },
+  { value: 'nz', label: '🇳🇿 New Zealand', name: 'New Zealand', flag: '🇳🇿' },
+  { value: 'ng', label: '🇳🇬 Nigeria', name: 'Nigeria', flag: '🇳🇬' },
+  { value: 'no', label: '🇳🇴 Norway', name: 'Norway', flag: '🇳🇴' },
+  { value: 'om', label: '🇴🇲 Oman', name: 'Oman', flag: '🇴🇲' },
+  { value: 'pk', label: '🇵🇰 Pakistan', name: 'Pakistan', flag: '🇵🇰' },
+  { value: 'ps', label: '🇵🇸 Palestine', name: 'Palestine', flag: '🇵🇸' },
+  { value: 'ph', label: '🇵🇭 Philippines', name: 'Philippines', flag: '🇵🇭' },
+  { value: 'pl', label: '🇵🇱 Poland', name: 'Poland', flag: '🇵🇱' },
+  { value: 'pt', label: '🇵🇹 Portugal', name: 'Portugal', flag: '🇵🇹' },
+  { value: 'qa', label: '🇶🇦 Qatar', name: 'Qatar', flag: '🇶🇦' },
+  { value: 'ro', label: '🇷🇴 Romania', name: 'Romania', flag: '🇷🇴' },
+  { value: 'ru', label: '🇷🇺 Russia', name: 'Russia', flag: '🇷🇺' },
+  { value: 'sa', label: '🇸🇦 Saudi Arabia', name: 'Saudi Arabia', flag: '🇸🇦' },
+  { value: 'sg', label: '🇸🇬 Singapore', name: 'Singapore', flag: '🇸🇬' },
+  { value: 'za', label: '🇿🇦 South Africa', name: 'South Africa', flag: '🇿🇦' },
+  { value: 'es', label: '🇪🇸 Spain', name: 'Spain', flag: '🇪🇸' },
+  { value: 'sd', label: '🇸🇩 Sudan', name: 'Sudan', flag: '🇸🇩' },
+  { value: 'se', label: '🇸🇪 Sweden', name: 'Sweden', flag: '🇸🇪' },
+  { value: 'ch', label: '🇨🇭 Switzerland', name: 'Switzerland', flag: '🇨🇭' },
   { value: 'sy', label: '🇸🇾 Syria', name: 'Syria', flag: '🇸🇾' },
-  { value: 'sd', label: '🇸🇩 Sudan', name: 'Sudan', flag: '🇸🇩' }
+  { value: 'tw', label: '🇹🇼 Taiwan', name: 'Taiwan', flag: '🇹🇼' },
+  { value: 'th', label: '🇹🇭 Thailand', name: 'Thailand', flag: '🇹🇭' },
+  { value: 'tn', label: '🇹🇳 Tunisia', name: 'Tunisia', flag: '🇹🇳' },
+  { value: 'tr', label: '🇹🇷 Turkey', name: 'Turkey', flag: '🇹🇷' },
+  { value: 'ua', label: '🇺🇦 Ukraine', name: 'Ukraine', flag: '🇺🇦' },
+  { value: 'gb', label: '🇬🇧 UK', name: 'United Kingdom', flag: '🇬🇧' },
+  { value: 'us', label: '🇺🇸 USA', name: 'United States', flag: '🇺🇸' },
+  { value: 'ye', label: '🇾🇪 Yemen', name: 'Yemen', flag: '🇾🇪' }
 ]);
 
 // Load all countries from API
@@ -449,12 +487,30 @@ const loadCountries = async () => {
       throw new Error('Failed to load countries');
     }
     
-    const data = await response.json();
+    let data = await response.json();
     // Use static list if API fails
     if (!data || data.length === 0) {
       console.log('Using static countries list');
       return;
     }
+    
+    // Filter out Israel from the API results
+    data = data.filter((country: any) => country.value !== 'il');
+    
+    // Check if Palestine is in the list, add it if not
+    const hasPalestine = data.some((country: any) => country.value === 'ps');
+    if (!hasPalestine) {
+      data.push({ value: 'ps', label: '🇵🇸 Palestine', name: 'Palestine', flag: '🇵🇸' });
+    }
+    
+    // Make sure Egypt is in the list
+    const hasEgypt = data.some((country: any) => country.value === 'eg');
+    if (!hasEgypt) {
+      data.push({ value: 'eg', label: '🇪🇬 Egypt', name: 'Egypt', flag: '🇪🇬' });
+    }
+    
+    // Sort data alphabetically by name (after excluding 'any')
+    data.sort((a: any, b: any) => a.name.localeCompare(b.name));
     
     // Add "any" option to the beginning
     countries.value = [
@@ -463,6 +519,7 @@ const loadCountries = async () => {
     ];
     
     console.log('Countries loaded:', countries.value.length);
+    console.log('Filtered out Israel and ensured Palestine and Egypt are included');
   } catch (error) {
     console.error('Failed to load countries list:', error);
     // Static list is already loaded as fallback
@@ -653,11 +710,19 @@ const removePreferredCountry = (countryCode: string) => {
 const addBlockedCountry = (countryCode: string) => {
   if (countryCode && !blockedCountries.value.includes(countryCode)) {
     blockedCountries.value.push(countryCode);
+    const countryName = getCountryName(countryCode);
+    console.log(`Added ${countryName} (${countryCode}) to blocked countries list`);
+    // Save immediately to persist changes
+    localStorage.setItem('blockedCountries', JSON.stringify(blockedCountries.value));
   }
 };
 
 const removeBlockedCountry = (countryCode: string) => {
   blockedCountries.value = blockedCountries.value.filter(c => c !== countryCode);
+  const countryName = getCountryName(countryCode);
+  console.log(`Removed ${countryName} (${countryCode}) from blocked countries list`);
+  // Save immediately to persist changes
+  localStorage.setItem('blockedCountries', JSON.stringify(blockedCountries.value));
 };
 
 const clearFilters = () => {
@@ -668,6 +733,11 @@ const clearFilters = () => {
 };
 
 const applyFilters = () => {
+  // Add diagnostic logs
+  console.log('Applying filters with the following settings:');
+  console.log('- Blocked countries:', blockedCountries.value.length ? blockedCountries.value : 'None');
+  console.log('- Preferred countries:', preferredCountries.value.length ? preferredCountries.value : 'None');
+  
   isFiltersOpen.value = false;
   saveFilterSettings();
   restartMatching();
@@ -780,10 +850,21 @@ const loadFilterSettings = () => {
 
 const restartMatching = () => {
   if (socket.value && isConnected.value) {
-    socket.value.emit('startMatching', {
-      preferredCountries: preferredCountries.value.length > 0 ? preferredCountries.value : null,
+    console.log('Restarting matching with updated filters:', {
+      preferredCountries: preferredCountries.value,
       blockedCountries: blockedCountries.value
     });
+    
+    socket.value.emit('startMatching', {
+      preferredCountries: preferredCountries.value.length > 0 ? preferredCountries.value : null,
+      blockedCountries: blockedCountries.value // Always send this array, even if empty
+    });
+    
+    // Update UI to show searching state
+    connectionStatus.value = 'searching';
+    connectionError.value = '';
+  } else {
+    console.warn('Cannot restart matching - socket not connected');
   }
 };
 
@@ -847,6 +928,14 @@ onMounted(() => {
   
   // Set up socket.io event listeners
   if (socket.value) {
+    // Add handler for filters-updated event
+    socket.value.on('filters-updated', (data: { success: boolean }) => {
+      if (data.success) {
+        console.log('Filters updated successfully on server');
+        // Toast notification could be added here
+      }
+    });
+
     // Listen for user location data from server
     socket.value.on('user-location', (locationData: any) => {
       console.log('Received user location:', locationData);

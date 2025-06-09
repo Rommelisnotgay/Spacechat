@@ -297,16 +297,27 @@ io.on('connection', (socket) => {
         if (partnerInfo) {
             const partnerSocketId = partnerInfo.socketId;
             const partnerSocket = io.sockets.sockets.get(partnerSocketId);
-            if (partnerSocket && partnerSocket.data.partnerId === userId) {
+            if (partnerSocket) {
                 // Reset partner connection
                 partnerSocket.data.partnerId = null;
-                // Notify partner
-                io.to(partnerSocketId).emit('partner-disconnected');
-                console.log(`Notified partner ${partnerId} of disconnection`);
+                // Notify partner with more details for better debugging
+                console.log(`Notifying partner ${partnerId} about disconnection from ${userId}`);
+                io.to(partnerSocketId).emit('partner-disconnected', {
+                    reason: 'user-initiated',
+                    userId: userId
+                });
             }
+            else {
+                console.log(`Partner socket not found for ID ${partnerId}`);
+            }
+        }
+        else {
+            console.log(`Partner info not found for ID ${partnerId}`);
         }
         // Make sure user is not in queue
         removeUserFromQueue(userId);
+        // Confirm to user that partner connection has ended
+        socket.emit('disconnect-confirmed');
     });
     // Connect to specific user
     socket.on('connect-to-user', (data) => {
@@ -340,21 +351,31 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         const userId = socket.data.userId;
         console.log(`User disconnected: ${userId}`);
+        // Notify partner if connected
+        if (socket.data.partnerId) {
+            const partnerId = socket.data.partnerId;
+            const partnerInfo = activeUsers.get(partnerId);
+            if (partnerInfo) {
+                console.log(`Notifying partner ${partnerId} about disconnection from ${userId}`);
+                // Emit a more descriptive event with reason
+                io.to(partnerInfo.socketId).emit('partner-disconnected', {
+                    reason: 'connection-lost',
+                    userId: userId
+                });
+                // Also reset the partner's connection
+                const partnerSocket = io.sockets.sockets.get(partnerInfo.socketId);
+                if (partnerSocket) {
+                    partnerSocket.data.partnerId = null;
+                }
+            }
+        }
         // Keep the user in the activeUsers map for a short period
         // to handle page refresh events more gracefully
         // Instead of deleting immediately, we'll let the cleanup task handle it
-        // Notify partner if connected
-        if (socket.data.partnerId) {
-            const partnerInfo = activeUsers.get(socket.data.partnerId);
-            if (partnerInfo) {
-                io.to(partnerInfo.socketId).emit('partner-disconnected');
-            }
-        }
         // Remove from queue if present
         removeUserFromQueue(userId);
-        // We don't immediately update the online count to avoid
-        // fluctuations during page refreshes
-        // The cleanup task will update the count when appropriate
+        // Mark the user as potentially inactive but don't remove yet
+        // The cleanup task will handle removal after timeout
     });
     // Handle ping to keep connection alive
     socket.on('ping', () => {
@@ -364,6 +385,45 @@ io.on('connection', (socket) => {
             userLastSeen.set(userId, Date.now());
             socket.emit('pong');
         }
+    });
+    // Handle startMatching event for updating filters and restarting matching
+    socket.on('startMatching', (data) => {
+        const userId = socket.data.userId;
+        console.log(`User ${userId} updating filters and restarting matching`);
+        console.log('New filters:', JSON.stringify(data));
+        // Remove user from queue if already in it
+        removeUserFromQueue(userId);
+        // Get current user info
+        const userInfo = activeUsers.get(userId);
+        if (!userInfo) {
+            console.log(`User ${userId} not found in active users`);
+            return;
+        }
+        // Update user preferences in active users map
+        if (!userInfo.preferences) {
+            userInfo.preferences = {};
+        }
+        // Update country preferences
+        if (data.preferredCountries !== undefined) {
+            userInfo.preferences.preferredCountries = data.preferredCountries;
+        }
+        if (data.blockedCountries !== undefined) {
+            userInfo.preferences.blockedCountries = data.blockedCountries;
+            console.log(`Updated blocked countries for user ${userId}:`, data.blockedCountries);
+        }
+        // Save updated user info
+        activeUsers.set(userId, userInfo);
+        // Add the user back to the queue with updated preferences
+        userQueue.push({
+            userId: userId,
+            vibe: userInfo.vibe || 'any',
+            joinTime: Date.now(),
+            preferences: userInfo.preferences
+        });
+        // Try to match users after a short delay
+        setTimeout(matchUsers, 500);
+        // Send confirmation to the client
+        socket.emit('filters-updated', { success: true });
     });
     // Add event handler for user identification
     socket.on('user:identify', (data, callback) => {
@@ -444,6 +504,44 @@ io.on('connection', (socket) => {
         }
         else {
             console.log(`Cannot forward ICE candidate: target user ${data.to} not found`);
+        }
+    });
+    // Handle WebRTC connection state changes
+    socket.on('webrtc-connection-state', (data) => {
+        const userId = socket.data.userId;
+        const targetUserInfo = activeUsers.get(data.to);
+        console.log(`WebRTC connection state changed for ${userId}: ${data.state} (reason: ${data.reason})`);
+        // If the connection has failed or closed, notify the other user
+        if (data.state === 'failed' || data.state === 'closed' || data.state === 'disconnected') {
+            if (targetUserInfo) {
+                console.log(`Notifying user ${data.to} about WebRTC connection state change: ${data.state}`);
+                io.to(targetUserInfo.socketId).emit('webrtc-connection-state', {
+                    state: data.state,
+                    from: userId,
+                    reason: data.reason
+                });
+                // For failed or closed states, also send the partner-disconnected event
+                // This ensures the UI is updated correctly
+                if (data.state === 'failed' || data.state === 'closed') {
+                    console.log(`Sending partner-disconnected event to ${data.to} due to WebRTC state: ${data.state}`);
+                    io.to(targetUserInfo.socketId).emit('partner-disconnected', {
+                        reason: 'connection-failed',
+                        userId: userId
+                    });
+                    // Also update the connection state on the server
+                    const sourceSocket = io.sockets.sockets.get(socket.id);
+                    const targetSocket = io.sockets.sockets.get(targetUserInfo.socketId);
+                    if (sourceSocket) {
+                        sourceSocket.data.partnerId = null;
+                    }
+                    if (targetSocket && targetSocket.data.partnerId === userId) {
+                        targetSocket.data.partnerId = null;
+                    }
+                }
+            }
+            else {
+                console.log(`Cannot notify about WebRTC state: target user ${data.to} not found`);
+            }
         }
     });
 });
@@ -573,12 +671,16 @@ function areUsersCompatible(user1, user2) {
     if (user2Country !== 'unknown' &&
         user1Prefs.blockedCountries?.length &&
         user1Prefs.blockedCountries.includes(user2Country)) {
+        console.log(`Compatibility check failed: User ${user1.userId} has blocked country ${user2Country} of user ${user2.userId}`);
+        console.log(`User ${user1.userId} blocked countries:`, user1Prefs.blockedCountries);
         return false;
     }
     // If user2 has blocked user1's country
     if (user1Country !== 'unknown' &&
         user2Prefs.blockedCountries?.length &&
         user2Prefs.blockedCountries.includes(user1Country)) {
+        console.log(`Compatibility check failed: User ${user2.userId} has blocked country ${user1Country} of user ${user1.userId}`);
+        console.log(`User ${user2.userId} blocked countries:`, user2Prefs.blockedCountries);
         return false;
     }
     // If both users have preferred countries, check if user2's country is in user1's preferred list
@@ -587,6 +689,7 @@ function areUsersCompatible(user1, user2) {
         !user1Prefs.preferredCountries.includes(user2Country)) {
         // Only enforce if user has specific preferences
         if (user1Prefs.preferredCountries.length > 0) {
+            console.log(`Compatibility check failed: User ${user1.userId} prefers specific countries (${user1Prefs.preferredCountries.join(', ')}) but user ${user2.userId} is from ${user2Country}`);
             return false;
         }
     }
@@ -596,6 +699,7 @@ function areUsersCompatible(user1, user2) {
         !user2Prefs.preferredCountries.includes(user1Country)) {
         // Only enforce if user has specific preferences
         if (user2Prefs.preferredCountries.length > 0) {
+            console.log(`Compatibility check failed: User ${user2.userId} prefers specific countries (${user2Prefs.preferredCountries.join(', ')}) but user ${user1.userId} is from ${user1Country}`);
             return false;
         }
     }
@@ -611,8 +715,20 @@ function areUsersCompatible(user1, user2) {
         if (!hasCommonInterest) {
             // Only enforce this if both users have specified interests
             if (user1Prefs.interests.length > 0 && user2Prefs.interests.length > 0) {
+                console.log(`Compatibility check failed: Users ${user1.userId} and ${user2.userId} have no common interests`);
                 return false;
             }
+        }
+    }
+    // All checks passed, users are compatible
+    console.log(`Users ${user1.userId} and ${user2.userId} are compatible - match approved`);
+    if (user1Prefs.blockedCountries?.length || user2Prefs.blockedCountries?.length) {
+        console.log(`User countries: ${user1.userId} from ${user1Country}, ${user2.userId} from ${user2Country}`);
+        if (user1Prefs.blockedCountries?.length) {
+            console.log(`User ${user1.userId} blocked countries:`, user1Prefs.blockedCountries);
+        }
+        if (user2Prefs.blockedCountries?.length) {
+            console.log(`User ${user2.userId} blocked countries:`, user2Prefs.blockedCountries);
         }
     }
     return true;

@@ -476,6 +476,56 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle startMatching event for updating filters and restarting matching
+  socket.on('startMatching', (data: { preferredCountries?: string[] | null, blockedCountries?: string[] }) => {
+    const userId = socket.data.userId;
+    
+    console.log(`User ${userId} updating filters and restarting matching`);
+    console.log('New filters:', JSON.stringify(data));
+    
+    // Remove user from queue if already in it
+    removeUserFromQueue(userId);
+    
+    // Get current user info
+    const userInfo = activeUsers.get(userId);
+    if (!userInfo) {
+      console.log(`User ${userId} not found in active users`);
+      return;
+    }
+    
+    // Update user preferences in active users map
+    if (!userInfo.preferences) {
+      userInfo.preferences = {};
+    }
+
+    // Update country preferences
+    if (data.preferredCountries !== undefined) {
+      userInfo.preferences.preferredCountries = data.preferredCountries;
+    }
+    
+    if (data.blockedCountries !== undefined) {
+      userInfo.preferences.blockedCountries = data.blockedCountries;
+      console.log(`Updated blocked countries for user ${userId}:`, data.blockedCountries);
+    }
+    
+    // Save updated user info
+    activeUsers.set(userId, userInfo);
+    
+    // Add the user back to the queue with updated preferences
+    userQueue.push({
+      userId: userId,
+      vibe: userInfo.vibe || 'any',
+      joinTime: Date.now(),
+      preferences: userInfo.preferences
+    });
+    
+    // Try to match users after a short delay
+    setTimeout(matchUsers, 500);
+    
+    // Send confirmation to the client
+    socket.emit('filters-updated', { success: true });
+  });
+
   // Add event handler for user identification
   socket.on('user:identify', (data: { prevUserId?: string }, callback: (userId: string) => void) => {
     const currentUserId = socket.data.userId;
@@ -773,6 +823,8 @@ function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
     user1Prefs.blockedCountries?.length && 
     user1Prefs.blockedCountries.includes(user2Country)
   ) {
+    console.log(`Compatibility check failed: User ${user1.userId} has blocked country ${user2Country} of user ${user2.userId}`);
+    console.log(`User ${user1.userId} blocked countries:`, user1Prefs.blockedCountries);
     return false;
   }
   
@@ -782,6 +834,8 @@ function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
     user2Prefs.blockedCountries?.length && 
     user2Prefs.blockedCountries.includes(user1Country)
   ) {
+    console.log(`Compatibility check failed: User ${user2.userId} has blocked country ${user1Country} of user ${user1.userId}`);
+    console.log(`User ${user2.userId} blocked countries:`, user2Prefs.blockedCountries);
     return false;
   }
   
@@ -793,6 +847,7 @@ function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
   ) {
     // Only enforce if user has specific preferences
     if (user1Prefs.preferredCountries.length > 0) {
+      console.log(`Compatibility check failed: User ${user1.userId} prefers specific countries (${user1Prefs.preferredCountries.join(', ')}) but user ${user2.userId} is from ${user2Country}`);
       return false;
     }
   }
@@ -805,6 +860,7 @@ function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
   ) {
     // Only enforce if user has specific preferences
     if (user2Prefs.preferredCountries.length > 0) {
+      console.log(`Compatibility check failed: User ${user2.userId} prefers specific countries (${user2Prefs.preferredCountries.join(', ')}) but user ${user1.userId} is from ${user1Country}`);
       return false;
     }
   }
@@ -828,8 +884,22 @@ function areUsersCompatible(user1: QueueUser, user2: QueueUser): boolean {
     if (!hasCommonInterest) {
       // Only enforce this if both users have specified interests
       if (user1Prefs.interests.length > 0 && user2Prefs.interests.length > 0) {
+        console.log(`Compatibility check failed: Users ${user1.userId} and ${user2.userId} have no common interests`);
         return false;
       }
+    }
+  }
+  
+  // All checks passed, users are compatible
+  console.log(`Users ${user1.userId} and ${user2.userId} are compatible - match approved`);
+  
+  if (user1Prefs.blockedCountries?.length || user2Prefs.blockedCountries?.length) {
+    console.log(`User countries: ${user1.userId} from ${user1Country}, ${user2.userId} from ${user2Country}`);
+    if (user1Prefs.blockedCountries?.length) {
+      console.log(`User ${user1.userId} blocked countries:`, user1Prefs.blockedCountries);
+    }
+    if (user2Prefs.blockedCountries?.length) {
+      console.log(`User ${user2.userId} blocked countries:`, user2Prefs.blockedCountries);
     }
   }
   

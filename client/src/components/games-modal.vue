@@ -29,27 +29,23 @@
             class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
             :class="{'opacity-50 cursor-not-allowed': !isConnected}"
             :disabled="!isConnected"
+            @click="selectGame('rock-paper-scissors')"
           >
-            <div class="absolute inset-0 flex items-center justify-center bg-[#2e2e42]/80 rounded-lg">
-              <span class="bg-purple-500 text-white text-xs px-2 py-1 rounded-md font-medium">Coming Soon</span>
-            </div>
             <div class="bg-yellow-500 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">👊</div>
             <div class="text-white font-medium">Rock Paper Scissors</div>
             <div class="text-xs text-gray-400">vs Partner</div>
           </button>
           
-          <!-- Sound Game -->
+          <!-- Word Galaxy -->
           <button 
-            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center relative"
-            :class="{'opacity-50 cursor-not-allowed': true}"
-            disabled
+            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
+            :class="{'opacity-50 cursor-not-allowed': !isConnected}"
+            :disabled="!isConnected"
+            @click="selectGame('word-galaxy')"
           >
-            <div class="absolute inset-0 flex items-center justify-center bg-[#2e2e42]/80 rounded-lg">
-              <span class="bg-purple-500 text-white text-xs px-2 py-1 rounded-md font-medium">Coming Soon</span>
-            </div>
-            <div class="bg-indigo-600 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">🎵</div>
-            <div class="text-white font-medium">Sound Game</div>
-            <div class="text-xs text-gray-400">Voice Challenge</div>
+            <div class="bg-white text-gray-800 w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">💬</div>
+            <div class="text-white font-medium">Word Galaxy</div>
+            <div class="text-xs text-gray-400">Word Guessing Game</div>
           </button>
           
           <!-- Tic Tac Toe -->
@@ -64,7 +60,7 @@
             <div class="text-xs text-gray-400">vs Partner</div>
           </button>
           
-          <!-- Word Galaxy -->
+          <!-- Future Game -->
           <button 
             class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center relative"
             :class="{'opacity-50 cursor-not-allowed': true}"
@@ -73,9 +69,9 @@
             <div class="absolute inset-0 flex items-center justify-center bg-[#2e2e42]/80 rounded-lg">
               <span class="bg-purple-500 text-white text-xs px-2 py-1 rounded-md font-medium">Coming Soon</span>
             </div>
-            <div class="bg-white text-gray-800 w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">💬</div>
-            <div class="text-white font-medium">Word Galaxy</div>
-            <div class="text-xs text-gray-400">Brain Game</div>
+            <div class="bg-purple-600 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">🎲</div>
+            <div class="text-white font-medium">Mystery Game</div>
+            <div class="text-xs text-gray-400">More Fun Ahead</div>
           </button>
         </div>
         
@@ -113,6 +109,20 @@
           @back="closeGame"
           @error="handleGameError"
         />
+        <RockPaperScissors
+          v-if="selectedGame === 'rock-paper-scissors'"
+          :partnerId="partnerId"
+          :partnerReady="partnerReady"
+          @back="closeGame"
+          @error="handleGameError"
+        />
+        <WordGalaxy
+          v-if="selectedGame === 'word-galaxy'"
+          :partnerId="partnerId"
+          :partnerReady="partnerReady"
+          @back="closeGame"
+          @error="handleGameError"
+        />
       </div>
     </div>
   </div>
@@ -122,6 +132,8 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSocket } from '@/services/socket';
 import TicTacToe from './games/TicTacToe.vue';
+import RockPaperScissors from './games/RockPaperScissors.vue';
+import WordGalaxy from './games/WordGalaxy.vue';
 
 const { socket, userId } = useSocket();
 
@@ -185,8 +197,15 @@ const selectGame = (gameType: string) => {
 
 // Close game
 const closeGame = () => {
-  // Notify partner if needed
-  if (gameRoomId.value) {
+  // Notify partner that we're leaving the game but still in chat
+  if (gameRoomId.value && props.partnerId) {
+    socket.value?.emit('game-leave-notification', {
+      gameType: selectedGame.value || 'unknown',
+      to: props.partnerId,
+      message: 'Your partner returned to the game menu'
+    });
+    
+    // Also leave the room to clean up server resources
     socket.value?.emit('game-leave-room', {
       roomId: gameRoomId.value,
       to: props.partnerId
@@ -253,6 +272,13 @@ onMounted(() => {
       selectedGame.value = null;
     }
   });
+  
+  // Handle notifications
+  socket.value?.on('game-notification', (data: any) => {
+    if (data.from === props.partnerId) {
+      logDebugInfo(`Notification from partner: ${data.message}`);
+    }
+  });
 });
 
 // Clean up event listeners
@@ -261,6 +287,7 @@ onUnmounted(() => {
   socket.value?.off('game-partner-joined');
   socket.value?.off('game-error');
   socket.value?.off('game-partner-left');
+  socket.value?.off('game-notification');
   
   // Leave any active game room
   if (gameRoomId.value) {
