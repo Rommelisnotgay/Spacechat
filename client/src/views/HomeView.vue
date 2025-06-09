@@ -133,17 +133,17 @@
           </p>
           
           <!-- Links Section -->
-          <div class="flex flex-wrap justify-center gap-2 sm:gap-3 mt-2 sm:mt-4 text-xs">
-            <a href="#" class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/30 transition-all shadow-lg shadow-cyan-500/20">
+          <div class="grid grid-cols-2 md:flex md:flex-wrap justify-center gap-2 mt-2 sm:mt-4 text-xs">
+            <a href="#" class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/30 transition-all shadow-lg shadow-cyan-500/20 text-center">
               ℹ️ About
             </a>
-            <a href="https://instagram.com" target="_blank" class="bg-pink-500/20 border border-pink-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-pink-300 hover:text-pink-200 hover:bg-pink-500/30 transition-all shadow-lg shadow-pink-500/20">
+            <a href="https://instagram.com" target="_blank" class="bg-pink-500/20 border border-pink-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-pink-300 hover:text-pink-200 hover:bg-pink-500/30 transition-all shadow-lg shadow-pink-500/20 text-center">
               📷 Instagram
             </a>
-            <a href="https://facebook.com" target="_blank" class="bg-blue-500/20 border border-blue-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-blue-300 hover:text-blue-200 hover:bg-blue-500/30 transition-all shadow-lg shadow-blue-500/20">
+            <a href="https://facebook.com" target="_blank" class="bg-blue-500/20 border border-blue-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-blue-300 hover:text-blue-200 hover:bg-blue-500/30 transition-all shadow-lg shadow-blue-500/20 text-center">
               📘 Facebook
             </a>
-            <a href="mailto:contact@spacetalk.live" class="bg-emerald-500/20 border border-emerald-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/30 transition-all shadow-lg shadow-emerald-500/20">
+            <a href="mailto:contact@spacetalk.live" class="bg-emerald-500/20 border border-emerald-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/30 transition-all shadow-lg shadow-emerald-500/20 text-center">
               📧 Contact
             </a>
           </div>
