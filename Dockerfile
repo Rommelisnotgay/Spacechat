@@ -38,14 +38,15 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY server/package*.json ./server/
 
-# Install only production dependencies
+# Install production dependencies in root and server separately
 RUN npm install --only=production
+RUN cd server && npm install --only=production
 
 # Copy built client and server from builder stage
 COPY --from=builder /app/client/dist ./client/dist
 COPY --from=builder /app/server/dist ./server/dist
-COPY --from=builder /app/server/package.json ./server/
 
 # Set environment variables
 ENV NODE_ENV=production
