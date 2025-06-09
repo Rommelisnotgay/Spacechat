@@ -1,11 +1,11 @@
 <template>
-  <div class="space-y-3 sm:space-y-4 px-2">
+  <div class="space-y-2 sm:space-y-3 md:space-y-4 px-1 sm:px-2">
     <!-- Main Control Buttons -->
     <div class="flex justify-center items-center gap-2 sm:gap-3 md:gap-4">
       <!-- Mute Button -->
       <button
         @click="toggleMute"
-        class="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all shadow-xl transform hover:scale-110"
+        class="w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all shadow-xl transform hover:scale-110"
         :class="isMuted ? 'bg-gradient-to-r from-red-400 to-pink-400 shadow-red-400/70' : 'bg-gradient-to-r from-emerald-400 to-green-400 hover:from-green-400 hover:to-emerald-400 shadow-emerald-400/70'"
         :disabled="isProcessing"
       >
@@ -19,7 +19,7 @@
       <!-- Next/Find Partner Button -->
       <button
         @click="$emit('find-next')"
-        class="w-14 h-14 sm:w-16 sm:h-16 md:w-20 md:h-20 bg-gradient-to-r from-orange-400 to-yellow-400 hover:from-yellow-400 hover:to-orange-400 rounded-full flex items-center justify-center shadow-2xl shadow-orange-400/80 transition-all transform hover:scale-110"
+        class="w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20 bg-gradient-to-r from-orange-400 to-yellow-400 hover:from-yellow-400 hover:to-orange-400 rounded-full flex items-center justify-center shadow-2xl shadow-orange-400/80 transition-all transform hover:scale-110"
       >
         <span class="text-white text-xl sm:text-2xl md:text-3xl">📞</span>
       </button>
@@ -28,7 +28,7 @@
       <button
         @click="$emit('toggle-chat')"
         :disabled="isDisabled"
-        class="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-xl transition-all transform hover:scale-110"
+        class="w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center shadow-xl transition-all transform hover:scale-110"
         :class="isDisabled ? 'bg-gray-600 cursor-not-allowed opacity-50' : 'bg-gradient-to-r from-blue-400 to-cyan-400 hover:from-cyan-400 hover:to-blue-400 shadow-blue-400/70'"
       >
         <span class="text-white text-base sm:text-lg md:text-xl">💬</span>
@@ -36,22 +36,22 @@
     </div>
 
     <!-- Secondary Controls -->
-    <div class="flex flex-wrap justify-center gap-1.5 sm:gap-2 md:gap-3">
+    <div class="flex flex-wrap justify-center gap-1 sm:gap-2 md:gap-3">
       <button
         @click="$emit('toggle-games')"
-        class="bg-gradient-to-r from-purple-400 to-pink-400 hover:from-pink-400 hover:to-purple-400 rounded-full px-2.5 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-purple-400/70 transition-all transform hover:scale-110 whitespace-nowrap"
+        class="bg-gradient-to-r from-purple-400 to-pink-400 hover:from-pink-400 hover:to-purple-400 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-purple-400/70 transition-all transform hover:scale-110 whitespace-nowrap"
       >
         🎮 Games
       </button>
       <button
         @click="$emit('toggle-history')"
-        class="bg-gradient-to-r from-indigo-400 to-blue-400 hover:from-blue-400 hover:to-indigo-400 rounded-full px-2.5 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-indigo-400/70 transition-all transform hover:scale-110 whitespace-nowrap"
+        class="bg-gradient-to-r from-indigo-400 to-blue-400 hover:from-blue-400 hover:to-indigo-400 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-indigo-400/70 transition-all transform hover:scale-110 whitespace-nowrap"
       >
         📞 History
       </button>
       <button
         @click="$emit('toggle-donation')"
-        class="bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-orange-400 hover:to-yellow-400 rounded-full px-2.5 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-yellow-400/70 transition-all animate-pulse transform hover:scale-110 whitespace-nowrap"
+        class="bg-gradient-to-r from-yellow-400 to-orange-400 hover:from-orange-400 hover:to-yellow-400 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 md:px-4 md:py-2 text-xs md:text-sm shadow-xl shadow-yellow-400/70 transition-all animate-pulse transform hover:scale-110 whitespace-nowrap"
       >
         ❤️ Support
       </button>

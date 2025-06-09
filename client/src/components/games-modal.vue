@@ -1,11 +1,11 @@
 <template>
-  <div v-if="isOpen" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+  <div v-if="isOpen" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-2 sm:p-4">
     <div class="bg-[#1e1e2e] rounded-lg w-full max-w-md mx-auto shadow-2xl relative overflow-hidden">
       <!-- Header -->
-      <div class="flex items-center justify-between p-3 border-b border-gray-800">
+      <div class="flex items-center justify-between p-2 sm:p-3 border-b border-gray-800">
         <div class="flex items-center gap-2">
-          <span class="text-purple-400 text-xl">🎮</span>
-          <h2 class="text-xl font-semibold text-[#a881fc]">Space Games</h2>
+          <span class="text-purple-400 text-lg sm:text-xl">🎮</span>
+          <h2 class="text-lg sm:text-xl font-semibold text-[#a881fc]">Space Games</h2>
         </div>
         <button 
           @click="$emit('close')" 
@@ -21,74 +21,74 @@
       </div>
       
       <!-- Game Select View -->
-      <div v-if="!selectedGame" class="p-4">
+      <div v-if="!selectedGame" class="p-3 sm:p-4">
         <!-- Games Grid -->
-        <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="grid grid-cols-2 gap-2 sm:gap-4 mb-3 sm:mb-4">
           <!-- Rock Paper Scissors -->
           <button 
-            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
+            class="bg-[#2e2e42] p-2 sm:p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
             :class="{'opacity-50 cursor-not-allowed': !isConnected}"
             :disabled="!isConnected"
             @click="selectGame('rock-paper-scissors')"
           >
-            <div class="bg-yellow-500 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">👊</div>
-            <div class="text-white font-medium">Rock Paper Scissors</div>
-            <div class="text-xs text-gray-400">vs Partner</div>
+            <div class="bg-yellow-500 text-white w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 sm:mb-3 text-base sm:text-xl">👊</div>
+            <div class="text-white text-xs sm:text-sm font-medium">Rock Paper Scissors</div>
+            <div class="text-xs text-gray-400 hidden sm:block">vs Partner</div>
           </button>
           
           <!-- Word Galaxy -->
           <button 
-            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
+            class="bg-[#2e2e42] p-2 sm:p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
             :class="{'opacity-50 cursor-not-allowed': !isConnected}"
             :disabled="!isConnected"
             @click="selectGame('word-galaxy')"
           >
-            <div class="bg-white text-gray-800 w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">💬</div>
-            <div class="text-white font-medium">Word Galaxy</div>
-            <div class="text-xs text-gray-400">Word Guessing Game</div>
+            <div class="bg-white text-gray-800 w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 sm:mb-3 text-base sm:text-xl">💬</div>
+            <div class="text-white text-xs sm:text-sm font-medium">Word Galaxy</div>
+            <div class="text-xs text-gray-400 hidden sm:block">Word Guessing Game</div>
           </button>
           
           <!-- Tic Tac Toe -->
           <button 
-            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
+            class="bg-[#2e2e42] p-2 sm:p-4 rounded-lg flex flex-col items-center text-center hover:bg-[#3a3a52] transition-colors relative"
             :class="{'opacity-50 cursor-not-allowed': !isConnected}"
             :disabled="!isConnected"
             @click="selectGame('tic-tac-toe')"
           >
-            <div class="bg-red-600 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">⭕</div>
-            <div class="text-white font-medium">Tic-Tac-Toe</div>
-            <div class="text-xs text-gray-400">vs Partner</div>
+            <div class="bg-red-600 text-white w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 sm:mb-3 text-base sm:text-xl">⭕</div>
+            <div class="text-white text-xs sm:text-sm font-medium">Tic-Tac-Toe</div>
+            <div class="text-xs text-gray-400 hidden sm:block">vs Partner</div>
           </button>
           
           <!-- Future Game -->
           <button 
-            class="bg-[#2e2e42] p-4 rounded-lg flex flex-col items-center text-center relative"
+            class="bg-[#2e2e42] p-2 sm:p-4 rounded-lg flex flex-col items-center text-center relative"
             :class="{'opacity-50 cursor-not-allowed': true}"
             disabled
           >
             <div class="absolute inset-0 flex items-center justify-center bg-[#2e2e42]/80 rounded-lg">
               <span class="bg-purple-500 text-white text-xs px-2 py-1 rounded-md font-medium">Coming Soon</span>
             </div>
-            <div class="bg-purple-600 text-white w-12 h-12 rounded-full flex items-center justify-center mb-3 text-xl">🎲</div>
-            <div class="text-white font-medium">Mystery Game</div>
-            <div class="text-xs text-gray-400">More Fun Ahead</div>
+            <div class="bg-purple-600 text-white w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center mb-2 sm:mb-3 text-base sm:text-xl">🎲</div>
+            <div class="text-white text-xs sm:text-sm font-medium">Mystery Game</div>
+            <div class="text-xs text-gray-400 hidden sm:block">More Fun Ahead</div>
           </button>
         </div>
         
         <!-- Connection Notice -->
-        <p class="text-center text-sm text-gray-400 mt-2">
+        <p class="text-center text-xs sm:text-sm text-gray-400 mt-2">
           Connect to play with others
         </p>
       </div>
       
       <!-- Error Message -->
-      <div v-else-if="errorMessage" class="text-center p-6">
+      <div v-else-if="errorMessage" class="text-center p-4 sm:p-6">
         <div class="mb-4">
-          <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
-            <span class="text-2xl">⚠️</span>
+          <div class="w-12 h-12 sm:w-16 sm:h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-2">
+            <span class="text-xl sm:text-2xl">⚠️</span>
           </div>
-          <h3 class="text-xl font-bold mb-2 text-red-400">Game Error</h3>
-          <p class="text-gray-300">{{ errorMessage }}</p>
+          <h3 class="text-lg sm:text-xl font-bold mb-2 text-red-400">Game Error</h3>
+          <p class="text-sm sm:text-base text-gray-300">{{ errorMessage }}</p>
         </div>
         
         <button 

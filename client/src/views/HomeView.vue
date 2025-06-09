@@ -12,10 +12,10 @@
     
     <div class="relative min-h-screen z-10 text-white">
       <!-- Header -->
-      <header class="p-4 border-b border-white/10">
+      <header class="p-2 sm:p-4 border-b border-white/10">
         <div class="max-w-4xl mx-auto">
           <!-- Logo -->
-          <div class="text-center mb-4">
+          <div class="text-center mb-2 sm:mb-4">
             <div class="inline-flex items-center gap-2">
               <div class="w-6 h-6 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center shadow-lg shadow-cyan-500/50">
                 <span class="text-white text-xs">✨</span>
@@ -27,7 +27,7 @@
           </div>
 
           <!-- Statistics -->
-          <div class="flex justify-center gap-2 mb-3">
+          <div class="flex justify-center gap-2 mb-2 sm:mb-3">
             <div class="bg-green-500/20 rounded-full px-2 py-1 text-xs flex items-center gap-1">
               <div class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
               <span>{{ onlineCount }} online</span>
@@ -41,7 +41,7 @@
           <div class="grid grid-cols-2 gap-2 text-xs relative">
             <div class="relative" ref="vibeDropdownRef">
               <div @click="toggleVibeDropdown" class="cursor-pointer bg-purple-500/20 border border-purple-500/30 rounded-full h-8 flex items-center justify-between px-3 text-xs shadow-lg shadow-purple-500/20 text-white hover:bg-purple-500/30 active:scale-95 transition-all duration-150">
-                <span class="flex items-center">
+                <span class="flex items-center truncate">
                   {{ getVibeEmoji(selectedVibe) }} {{ getVibeText(selectedVibe) }}
                 </span>
                 <span class="ml-2 text-xs transition-transform duration-300" :class="{ 'rotate-180': showVibeDropdown }">▼</span>
@@ -75,8 +75,8 @@
       </header>
 
       <!-- Main Content Area -->
-      <main class="flex-1 p-4">
-        <div class="max-w-md mx-auto space-y-6">
+      <main class="flex-1 p-2 sm:p-4">
+        <div class="max-w-md mx-auto space-y-4 sm:space-y-6">
           <!-- Connection Status Card -->
           <connection-card 
             :status="connectionStatus" 
@@ -86,7 +86,7 @@
           />
 
           <!-- Auto-reconnect option -->
-          <div class="flex items-center justify-center gap-2 mb-4">
+          <div class="flex items-center justify-center gap-2 mb-2 sm:mb-4">
             <input
               type="checkbox"
               id="auto-reconnect"
@@ -118,32 +118,32 @@
       </main>
 
       <!-- Guidelines Section -->
-      <footer class="p-4 border-t border-white/10">
-        <div class="max-w-md mx-auto text-center space-y-2">
+      <footer class="p-2 sm:p-4 border-t border-white/10">
+        <div class="max-w-md mx-auto text-center space-y-1 sm:space-y-2">
           <h3 class="text-sm font-semibold text-emerald-400">Community Guidelines</h3>
-          <div class="text-xs text-gray-300 space-y-1">
+          <div class="text-xs text-gray-300 space-y-0.5 sm:space-y-1">
             <p>• Must be 18+ years old to use this service</p>
             <p>• Be respectful and kind to other users</p>
             <p>• No harassment, hate speech, or inappropriate content</p>
             <p>• Report any misconduct using the report feature</p>
             <p>• Your privacy and safety are our priority</p>
           </div>
-          <p class="text-xs text-gray-400 mt-3">
+          <p class="text-xs text-gray-400 mt-2 sm:mt-3">
             By using SpaceTalk.live, you agree to follow these guidelines
           </p>
           
           <!-- Links Section -->
-          <div class="flex justify-center gap-3 mt-4 text-xs">
-            <a href="#" class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-3 py-1.5 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/30 transition-all shadow-lg shadow-cyan-500/20">
+          <div class="flex flex-wrap justify-center gap-2 sm:gap-3 mt-2 sm:mt-4 text-xs">
+            <a href="#" class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/30 transition-all shadow-lg shadow-cyan-500/20">
               ℹ️ About
             </a>
-            <a href="https://instagram.com" target="_blank" class="bg-pink-500/20 border border-pink-500/30 rounded-full px-3 py-1.5 text-pink-300 hover:text-pink-200 hover:bg-pink-500/30 transition-all shadow-lg shadow-pink-500/20">
+            <a href="https://instagram.com" target="_blank" class="bg-pink-500/20 border border-pink-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-pink-300 hover:text-pink-200 hover:bg-pink-500/30 transition-all shadow-lg shadow-pink-500/20">
               📷 Instagram
             </a>
-            <a href="https://facebook.com" target="_blank" class="bg-blue-500/20 border border-blue-500/30 rounded-full px-3 py-1.5 text-blue-300 hover:text-blue-200 hover:bg-blue-500/30 transition-all shadow-lg shadow-blue-500/20">
+            <a href="https://facebook.com" target="_blank" class="bg-blue-500/20 border border-blue-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-blue-300 hover:text-blue-200 hover:bg-blue-500/30 transition-all shadow-lg shadow-blue-500/20">
               📘 Facebook
             </a>
-            <a href="mailto:contact@spacetalk.live" class="bg-emerald-500/20 border border-emerald-500/30 rounded-full px-3 py-1.5 text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/30 transition-all shadow-lg shadow-emerald-500/20">
+            <a href="mailto:contact@spacetalk.live" class="bg-emerald-500/20 border border-emerald-500/30 rounded-full px-2 py-1 sm:px-3 sm:py-1.5 text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/30 transition-all shadow-lg shadow-emerald-500/20">
               📧 Contact
             </a>
           </div>

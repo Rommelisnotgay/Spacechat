@@ -177,9 +177,9 @@ const getVibeDisplayName = (vibe: string) => {
 /* Base Container and Circle Styles */
 .status-container {
   position: relative;
-  width: 90px;
-  height: 90px;
-  margin: 0 auto 15px;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 12px;
   z-index: 1;
   transition: all 0.5s ease;
 }
@@ -198,192 +198,141 @@ const getVibeDisplayName = (vibe: string) => {
   height: 100%;
   border-radius: 50%;
   overflow: visible;
-  z-index: 2;
-  box-shadow: none;
-  transition: all 0.3s ease;
-  background: transparent;
 }
 
 .circle-image {
   width: 100%;
   height: 100%;
-  object-fit: contain;
   border-radius: 50%;
-  filter: none;
-  background: transparent;
-  transition: all 0.5s ease;
+  object-fit: cover;
+  z-index: 1;
+  position: relative;
 }
 
-/* Thin Ring - Common for all states */
 .thin-ring {
   position: absolute;
-  top: -0.05px;
-  left: -0.05px;
-  right: -0.05px;
-  bottom: -0.05px;
+  top: -4px;
+  left: -4px;
+  right: -4px;
+  bottom: -4px;
   border-radius: 50%;
-  border: 0.05px solid transparent;
-  background-origin: border-box;
-  background-clip: border-box;
-  box-sizing: border-box;
-  z-index: -1;
+  border: 2px solid transparent;
+  z-index: 0;
 }
 
-/* Idle State - Pulsing visibility */
-.idle-ring {
-  background-image: linear-gradient(90deg, #9c27b0, #3498db);
-  animation: fade-ring 3s ease-in-out infinite;
+/* Animation effect for pulse */
+.pulse-effect {
+  animation: pulse 1.5s infinite;
 }
 
-/* Searching State */
-.search-ring {
-  background-image: linear-gradient(90deg, #3498db, #9c27b0);
-  animation: rotate-ring 3s linear infinite;
-}
-
-/* Matching State */
-.match-ring {
-  background-image: linear-gradient(90deg, #9c27b0, #3498db);
-  animation: rotate-ring 1.5s linear infinite;
-}
-
-/* Connected State */
-.connect-ring {
-  background-image: linear-gradient(90deg, #3498db, #2ecc71, #3498db);
-  animation: rotate-ring 4s linear infinite;
-}
-
-/* Ring animations */
-@keyframes rotate-ring {
+@keyframes pulse {
   0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes fade-ring {
-  0%, 100% {
-    opacity: 0.2;
+    transform: scale(1);
+    opacity: 1;
   }
   50% {
+    transform: scale(1.05);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1);
     opacity: 1;
   }
 }
 
-/* Searching State - Pulsing effect */
-.pulse-effect {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.1);
-  }
-}
-
-/* Matching State - Fast Rotation effect */
+/* Fast rotate animation */
 .fast-rotate {
-  animation: fast-rotate 2s linear infinite;
+  animation: fastRotate 2s infinite linear;
 }
 
-@keyframes fast-rotate {
-  0% {
+@keyframes fastRotate {
+  from {
     transform: rotate(0deg);
   }
-  100% {
+  to {
     transform: rotate(360deg);
   }
 }
 
-/* Transition animations */
+/* Ring colors and animations */
+.idle-ring {
+  border-color: rgba(139, 92, 246, 0.3); /* Purple with low opacity */
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.3);
+}
+
+.search-ring {
+  border-color: rgba(59, 130, 246, 0.5); /* Blue */
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  animation: searchPulse 1.5s infinite alternate;
+}
+
+@keyframes searchPulse {
+  0% {
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 25px rgba(59, 130, 246, 0.6);
+  }
+}
+
+.match-ring {
+  border-color: rgba(234, 179, 8, 0.5); /* Yellow */
+  box-shadow: 0 0 20px rgba(234, 179, 8, 0.4);
+  animation: matchPulse 0.8s infinite alternate;
+}
+
+@keyframes matchPulse {
+  0% {
+    box-shadow: 0 0 15px rgba(234, 179, 8, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 30px rgba(234, 179, 8, 0.6);
+  }
+}
+
+.connect-ring {
+  border-color: rgba(34, 197, 94, 0.5); /* Green */
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.4);
+  animation: connectPulse 3s infinite alternate;
+}
+
+@keyframes connectPulse {
+  0% {
+    box-shadow: 0 0 15px rgba(34, 197, 94, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 25px rgba(34, 197, 94, 0.5);
+  }
+}
+
+/* Transition Classes */
+.idle-to-search-enter-active,
+.idle-to-search-leave-active,
+.search-to-match-enter-active,
+.search-to-match-leave-active,
+.match-to-connect-enter-active,
+.match-to-connect-leave-active,
+.to-idle-enter-active,
+.to-idle-leave-active,
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.5s, transform 0.5s;
 }
 
-.fade-enter-from,
+.idle-to-search-enter-from,
+.search-to-match-enter-from,
+.match-to-connect-enter-from,
+.to-idle-enter-from,
+.fade-enter-from {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+.idle-to-search-leave-to,
+.search-to-match-leave-to,
+.match-to-connect-leave-to,
+.to-idle-leave-to,
 .fade-leave-to {
-  opacity: 0;
-  transform: translateY(5px);
-}
-
-/* Idle to Search transition */
-.idle-to-search-enter-active {
-  transition: all 0.3s ease;
-}
-
-.idle-to-search-leave-active {
-  transition: all 0.2s ease;
-}
-
-.idle-to-search-enter-from {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
-.idle-to-search-leave-to {
-  opacity: 0;
-  transform: scale(1.05);
-}
-
-/* Search to Match transition */
-.search-to-match-enter-active {
-  transition: all 0.3s ease;
-}
-
-.search-to-match-leave-active {
-  transition: all 0.2s ease;
-}
-
-.search-to-match-enter-from {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
-.search-to-match-leave-to {
-  opacity: 0;
-  transform: scale(1.05);
-}
-
-/* Match to Connect transition */
-.match-to-connect-enter-active {
-  transition: all 0.3s ease;
-}
-
-.match-to-connect-leave-active {
-  transition: all 0.2s ease;
-}
-
-.match-to-connect-enter-from {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
-.match-to-connect-leave-to {
-  opacity: 0;
-  transform: scale(1.05);
-}
-
-/* To Idle transition */
-.to-idle-enter-active {
-  transition: all 0.3s ease;
-}
-
-.to-idle-leave-active {
-  transition: all 0.2s ease;
-}
-
-.to-idle-enter-from {
-  opacity: 0;
-  transform: scale(0.95);
-}
-
-.to-idle-leave-to {
   opacity: 0;
   transform: scale(1.05);
 }
