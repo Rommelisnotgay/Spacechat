@@ -1,0 +1,148 @@
+/**
+ * Responsive Game Styles
+ * يحتوي على الأنماط التي تحسن تجربة الألعاب على مختلف الأجهزة
+ */
+
+/* Mobile Styles - تحت 768 بكسل */
+@media (max-width: 767px) {
+  .game-board {
+    padding: 0.5rem !important;
+  }
+  
+  .game-cell {
+    width: 60px !important;
+    height: 60px !important;
+    font-size: 1.5rem !important;
+  }
+  
+  .game-button {
+    padding: 0.5rem 1rem !important;
+    font-size: 0.875rem !important;
+  }
+  
+  .game-header {
+    flex-direction: column !important;
+    gap: 0.5rem !important;
+  }
+  
+  .game-status {
+    width: 100% !important;
+    text-align: center !important;
+  }
+  
+  /* Word Galaxy Specific */
+  .word-input {
+    max-width: 100% !important;
+    font-size: 1rem !important;
+  }
+  
+  .letter-grid {
+    gap: 0.25rem !important;
+  }
+  
+  .letter-cell {
+    width: 40px !important;
+    height: 40px !important;
+    font-size: 0.875rem !important;
+  }
+  
+  /* RPS Specific */
+  .rps-choice {
+    transform: scale(0.8) !important;
+    margin: 0.25rem !important;
+  }
+}
+
+/* Tablet Styles - بين 768 و 1024 بكسل */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .game-cell {
+    width: 80px !important;
+    height: 80px !important;
+  }
+}
+
+/* Right-to-left Support تحسين دعم اللغة العربية */
+.rtl-support {
+  direction: rtl;
+  text-align: right;
+}
+
+.rtl-support .game-button {
+  flex-direction: row-reverse;
+}
+
+/* Game Animations تحسين التأثيرات البصرية */
+@keyframes win-pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes lose-shake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(3px); }
+  50% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+
+@keyframes draw-fade {
+  0% { opacity: 0.7; }
+  50% { opacity: 1; }
+  100% { opacity: 0.7; }
+}
+
+.win-effect {
+  animation: win-pulse 1s ease infinite;
+  border-color: rgba(52, 211, 153, 1) !important; /* غير اللون الأخضر */
+  border-width: 2px !important;
+  box-shadow: 0 0 15px rgba(52, 211, 153, 0.5) !important;
+}
+
+.lose-effect {
+  animation: lose-shake 0.5s ease-in-out;
+  border-color: rgba(248, 113, 113, 1) !important; /* غير اللون الأحمر */
+  border-width: 2px !important;
+}
+
+.draw-effect {
+  animation: draw-fade 2s ease infinite;
+  border-color: rgba(251, 191, 36, 1) !important; /* غير اللون الأصفر */
+  border-width: 2px !important;
+}
+
+/* Cursor hover effect */
+.game-interactive:hover {
+  transform: translateY(-2px);
+  transition: transform 0.2s ease;
+}
+
+/* Accessibility تحسين إمكانية الوصول */
+.game-button:focus, 
+.game-cell:focus {
+  outline: 2px solid rgba(139, 92, 246, 0.5) !important; /* لون بنفسجي */
+  outline-offset: 2px !important;
+}
+
+/* Transitions تأثيرات الانتقال */
+.game-transition {
+  transition: all 0.3s ease;
+}
+
+.game-fade-in {
+  animation: fadeIn 0.5s ease forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.game-fade-out {
+  animation: fadeOut 0.5s ease forwards;
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(10px); }
+} 

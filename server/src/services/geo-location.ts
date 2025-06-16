@@ -84,15 +84,18 @@ export async function getLocationFromIp(ip: string): Promise<GeoLocation | null>
       // تجاهل الخطأ والانتقال إلى الخدمة الاحتياطية التالية
     }
     
-    // محاولة ثالثة: استخدام ipinfo.io كخدمة احتياطية أخيرة
+    // محاولة ثالثة: استخدام ipinfo.io كخدمة احتياطية أخيرة مع token
     try {
-      const response = await axios.get(`https://ipinfo.io/${cleanIp}/json`, {
+      // استخدام IPInfo token: 0277d573b05252
+      const response = await axios.get(`https://ipinfo.io/${cleanIp}/json?token=0277d573b05252`, {
         timeout: 3000
       });
       
       if (response.data && response.data.country) {
         // تحويل رمز الدولة إلى علم إيموجي
         const flag = countryCodeToFlag(response.data.country);
+        
+        console.log(`IPInfo success: Identified ${cleanIp} as ${response.data.country} (${response.data.city || 'Unknown City'})`);
         
         return {
           country: response.data.country_name || response.data.country || 'Earth',

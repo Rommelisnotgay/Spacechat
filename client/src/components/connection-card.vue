@@ -18,6 +18,18 @@
         <p class="text-xs sm:text-sm text-gray-300">Press "Next" to find someone to talk with</p>
       </div>
 
+      <!-- Disconnecting State (NEW) -->
+      <div v-else-if="status === 'disconnecting'" key="disconnecting">
+        <div class="status-container">
+          <div class="status-circle">
+            <img src="@/assets/Circle.png" alt="Connection Circle" class="circle-image pulse-effect" />
+            <div class="thin-ring disconnecting-ring"></div>
+          </div>
+        </div>
+        <h2 class="text-base sm:text-lg font-semibold mb-1 sm:mb-2 text-white">{{ disconnectTitle }}</h2>
+        <p class="text-xs sm:text-sm text-red-300">{{ disconnectMessage }}</p>
+      </div>
+
       <!-- Searching State -->
       <div v-else-if="status === 'searching'" key="searching">
         <div class="status-container">
@@ -69,7 +81,8 @@
         <span :class="{
           'text-green-400': status === 'connected',
           'text-yellow-400': status === 'matched',
-          'text-blue-400': status === 'searching'
+          'text-blue-400': status === 'searching',
+          'text-red-400': status === 'disconnecting'
         }">●</span>
         <span class="text-gray-300">{{ connectionStatusText }}</span>
       </div>
@@ -81,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 
 interface PartnerInfo {
   flag?: string;
@@ -93,7 +106,7 @@ interface PartnerInfo {
 const props = defineProps({
   status: {
     type: String,
-    default: 'disconnected', // 'searching', 'matched', 'connected', 'disconnected'
+    default: 'disconnected', // 'searching', 'matched', 'connected', 'disconnected', 'disconnecting'
   },
   partnerInfo: {
     type: Object as () => PartnerInfo | null,
@@ -106,14 +119,63 @@ const props = defineProps({
   showStatus: {
     type: Boolean,
     default: true
+  },
+  disconnectReason: {
+    type: String,
+    default: ''
   }
 });
 
 // Отслеживаем последнее состояние для определения анимации перехода
 const lastStatus = ref(props.status);
 
+// Custom titles and messages for disconnecting state
+const disconnectTitle = computed(() => {
+  switch(props.disconnectReason) {
+    case 'skip':
+      return 'Skipped';
+    case 'network-disconnect':
+      return 'Connection Lost';
+    case 'inactivity':
+      return 'Inactive Connection';
+    case 'matching':
+      return 'Finding New Partner';
+    default:
+      return 'Disconnected';
+  }
+});
+
+const disconnectMessage = computed(() => {
+  switch(props.disconnectReason) {
+    case 'skip':
+      return 'The conversation has been skipped';
+    case 'network-disconnect':
+      return 'The connection with your partner was lost';
+    case 'inactivity':
+      return 'The call ended due to inactivity';
+    case 'matching':
+      return 'Looking for a new partner...';
+    default:
+      return 'The call has been ended';
+  }
+});
+
+// Add watch for partnerInfo to log changes
+watch(() => props.partnerInfo, (newInfo, oldInfo) => {
+  console.log('PartnerInfo changed in connection-card:', 
+    { new: newInfo ? 'Present' : 'Null', 
+      old: oldInfo ? 'Present' : 'Null',
+      status: props.status });
+}, { deep: true });
+
 watch(() => props.status, (newStatus, oldStatus) => {
+  console.log('Status changed in connection-card:', { new: newStatus, old: oldStatus });
   lastStatus.value = oldStatus;
+  
+  // Make sure partner info is null when disconnected
+  if (newStatus === 'disconnected' && props.partnerInfo !== null) {
+    console.warn('Warning: Partner info still present when status is disconnected');
+  }
 });
 
 // Определяем имя перехода на основе предыдущего и текущего состояния
@@ -126,6 +188,8 @@ const getTransitionName = computed(() => {
     return 'match-to-connect';
   } else if (props.status === 'disconnected') {
     return 'to-idle';
+  } else if (props.status === 'disconnecting') {
+    return 'to-disconnecting';
   } else {
     return 'fade';
   }
@@ -150,6 +214,7 @@ const connectionStatusText = computed(() => {
     case 'searching': return 'Searching...';
     case 'matched': return 'Partner found, connecting...';
     case 'connected': return 'Connected';
+    case 'disconnecting': return 'Call ended'; // Added for disconnecting state
     default: return 'Disconnected';
   }
 });
@@ -171,6 +236,13 @@ const getVibeDisplayName = (vibe: string) => {
       return vibe; // إرجاع القيمة الأصلية إذا لم يتم التعرف عليها
   }
 };
+
+// Listen for connection-closed event
+onMounted(() => {
+  window.addEventListener('connection-closed', () => {
+    console.log('Connection-closed event received in connection-card');
+  });
+});
 </script>
 
 <style scoped>
@@ -335,5 +407,22 @@ const getVibeDisplayName = (vibe: string) => {
 .fade-leave-to {
   opacity: 0;
   transform: scale(1.05);
+}
+
+.disconnecting-ring {
+  border-color: #ef4444;
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
+  animation: pulse-border-red 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-border-red {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.1);
+  }
 }
 </style> 

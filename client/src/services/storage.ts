@@ -133,3 +133,55 @@ export function saveCallToHistory(partnerId: string, duration: number, gamesPlay
     console.error('Error saving call to history:', error);
   }
 }
+
+/**
+ * وظائف إدارة حالة كتم الصوت
+ */
+export function useMicrophoneState() {
+  const { getItem, setItem } = useLocalStorage();
+  const MICROPHONE_MUTE_KEY = 'spacechat_microphone_muted';
+
+  /**
+   * حفظ حالة كتم الصوت
+   */
+  function saveMicrophoneState(isMuted: boolean): void {
+    setItem(MICROPHONE_MUTE_KEY, isMuted ? 'true' : 'false');
+  }
+
+  /**
+   * استرجاع حالة كتم الصوت المحفوظة
+   */
+  function getSavedMicrophoneState(): boolean | null {
+    const savedState = getItem(MICROPHONE_MUTE_KEY);
+    if (savedState === null) return null;
+    return savedState === 'true';
+  }
+
+  /**
+   * تطبيق حالة كتم الصوت المحفوظة على الاتصال الحالي
+   */
+  function applySavedMicrophoneState(toggleMicrophone: () => Promise<boolean>): Promise<void> {
+    return new Promise<void>(async (resolve) => {
+      try {
+        const savedState = getSavedMicrophoneState();
+        if (savedState !== null) {
+          console.log(`[Storage] Found saved microphone state: ${savedState ? 'muted' : 'unmuted'}`);
+          // استدعاء toggleMicrophone فقط إذا كانت الحالة المحفوظة هي كتم الصوت
+          // لأن الافتراضي هو أن الميكروفون غير مكتوم
+          if (savedState === true) {
+            await toggleMicrophone();
+          }
+        }
+      } catch (error) {
+        console.error('[Storage] Error applying saved microphone state:', error);
+      }
+      resolve();
+    });
+  }
+
+  return {
+    saveMicrophoneState,
+    getSavedMicrophoneState,
+    applySavedMicrophoneState
+  };
+}

@@ -25,8 +25,8 @@
       
       <div v-else class="space-y-4">
         <div 
-          v-for="(message, index) in messages" 
-          :key="index"
+          v-for="message in messages" 
+          :key="message.id"
           class="message-wrapper flex"
           :class="{'justify-end': message.sender === 'me'}"
         >
@@ -39,10 +39,46 @@
             ]"
           >
             <div class="message-content">{{ message.text }}</div>
-            <div class="message-time text-right text-xs mt-1 opacity-70">
-              {{ formatTime(message.timestamp) }}
+            <div class="message-footer flex justify-between items-center mt-1">
+              <div class="message-time text-xs opacity-70">
+                {{ formatTime(message.timestamp) }}
+              </div>
+              
+              <!-- Message status indicators (only for sent messages) -->
+              <div v-if="message.sender === 'me'" class="message-status flex items-center">
+                <!-- Status icon based on message status -->
+                <span v-if="message.status === 'sending'" class="text-xs opacity-70">
+                  <span class="animate-pulse">⏳</span>
+                </span>
+                <span v-else-if="message.status === 'sent'" class="text-xs opacity-70">
+                  ✓
+                </span>
+                <span v-else-if="message.status === 'delivered'" class="text-xs opacity-70">
+                  ✓✓
+                </span>
+                <span v-else-if="message.status === 'read'" class="text-xs text-blue-300">
+                  ✓✓
+                </span>
+                <span v-else-if="message.status === 'failed'" class="text-xs text-red-400">
+                  ⚠️
+                  <button 
+                    @click="resendMessage(message.id)"
+                    class="ml-1 text-red-300 hover:text-white"
+                    title="Retry sending"
+                  >
+                    🔄
+                  </button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+      
+      <!-- Connection Status Indicator -->
+      <div v-if="!isConnected" class="fixed bottom-20 left-0 right-0 mx-auto text-center">
+        <div class="inline-block bg-red-600/80 text-white px-4 py-2 rounded-full text-sm">
+          <span class="animate-pulse">●</span> Disconnected - Messages will be sent when reconnected
         </div>
       </div>
     </div>
@@ -57,7 +93,6 @@
             type="text" 
             class="w-full bg-purple-700 text-white rounded-full px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="Type a message..."
-            :disabled="!isConnected"
             ref="messageInput"
           />
           <div class="absolute right-3 top-2 text-xl emoji-trigger">
@@ -83,17 +118,16 @@
                   {{ emoji }}
                 </button>
               </div>
-      </div>
-      </div>
-    </div>
-      <button 
+            </div>
+          </div>
+        </div>
+        <button 
           type="submit"
           class="ml-2 bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-blue-500 transition-colors"
-          :disabled="!newMessage.trim() || !isConnected"
-          :class="{'opacity-50 cursor-not-allowed': !newMessage.trim() || !isConnected}"
+          :class="{'opacity-50 cursor-not-allowed': !newMessage.trim()}"
         >
           <span>→</span>
-      </button>
+        </button>
       </form>
     </div>
   </div>
@@ -167,11 +201,21 @@ watch(() => props.partnerId, (newPartnerId) => {
   });
 });
 
+// Watch for connection status changes
+watch(() => props.isConnected, (isConnected) => {
+  if (DEBUG) console.log(`[ChatInterface] Connection status changed: ${isConnected}`);
+  
+  if (isConnected) {
+    // Request any pending messages when connection is restored
+    socket.value?.emit('get-pending-messages');
+  }
+});
+
 onMounted(() => {
   if (DEBUG) console.log('[ChatInterface] Component mounted');
   
-  // Setup socket listeners for typing indicators
-  setupSocketListeners();
+  // Set up typing indicator event listener
+  setupTypingEventListener();
   
   // Set current partner in chat service
   if (props.partnerId) {
@@ -195,61 +239,70 @@ onMounted(() => {
   });
 });
 
-function setupSocketListeners() {
-  if (!socket.value) {
-    if (DEBUG) console.log('[ChatInterface] Socket not available, cannot set up listeners');
-    return;
-  }
-  
-  if (DEBUG) console.log('[ChatInterface] Setting up typing indicator listener');
-  
-  // Listen for typing indicators
-  socket.value.on('typing', (data: { from: string }) => {
-    if (data.from === props.partnerId) {
-      isPartnerTyping.value = true;
+function setupTypingEventListener() {
+  // Listen for typing events from the chat controller
+  window.addEventListener('chat:typing', ((event: CustomEvent) => {
+    const { partnerId, isTyping } = event.detail;
+    
+    if (partnerId === props.partnerId) {
+      isPartnerTyping.value = isTyping;
       
-      // Reset typing indicator after 3 seconds of inactivity
-      if (typingTimeout.value) {
+      // Reset typing indicator after 3 seconds of inactivity if isTyping is true
+      if (isTyping && typingTimeout.value) {
         clearTimeout(typingTimeout.value);
+        
+        typingTimeout.value = setTimeout(() => {
+          isPartnerTyping.value = false;
+        }, 3000);
       }
       
-      typingTimeout.value = setTimeout(() => {
-        isPartnerTyping.value = false;
-      }, 3000);
-      
-      if (DEBUG) console.log(`[ChatInterface] Partner ${data.from} is typing`);
+      if (DEBUG) console.log(`[ChatInterface] Partner ${partnerId} typing status: ${isTyping}`);
     }
-  });
+  }) as EventListener);
 }
 
 function sendMessage() {
-  if (!newMessage.value.trim() || !props.isConnected || !props.partnerId) {
-    if (DEBUG) console.log(`[ChatInterface] Cannot send message: text=${newMessage.value.trim() ? 'present' : 'empty'}, isConnected=${props.isConnected}, partnerId=${props.partnerId}`);
+  if (!newMessage.value.trim()) {
+    if (DEBUG) console.log(`[ChatInterface] Cannot send empty message`);
     return;
   }
   
   if (DEBUG) console.log(`[ChatInterface] Sending message to ${props.partnerId}: ${newMessage.value}`);
   
-  // Send message using chat service
-  const success = chat.sendMessage(newMessage.value, props.partnerId);
+  // Send message using chat service (will work even if disconnected)
+  if (props.partnerId) {
+    const success = chat.sendMessage(newMessage.value, props.partnerId);
+    
+    if (success) {
+      if (DEBUG) console.log('[ChatInterface] Message sent successfully');
+      // Clear input
+      newMessage.value = '';
+      
+      // Scroll to bottom
+      scrollToBottom();
+    } else {
+      if (DEBUG) console.log('[ChatInterface] Failed to send message');
+    }
+  }
+}
+
+function resendMessage(messageId: string) {
+  if (!props.partnerId) return;
+  
+  if (DEBUG) console.log(`[ChatInterface] Attempting to resend message ${messageId}`);
+  
+  const success = chat.resendMessage(messageId, props.partnerId);
   
   if (success) {
-    if (DEBUG) console.log('[ChatInterface] Message sent successfully');
-    // Clear input
-    newMessage.value = '';
-    
-    // Scroll to bottom
-    scrollToBottom();
+    if (DEBUG) console.log(`[ChatInterface] Message ${messageId} queued for resend`);
   } else {
-    if (DEBUG) console.log('[ChatInterface] Failed to send message');
+    if (DEBUG) console.log(`[ChatInterface] Failed to resend message ${messageId}`);
   }
 }
 
 function handleTyping() {
   if (props.isConnected && props.partnerId) {
-    socket.value?.emit('typing', {
-      to: props.partnerId
-    });
+    chat.handleTyping(props.partnerId);
   }
 }
 
@@ -318,5 +371,25 @@ function scrollToBottom() {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.message-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Animation for the pulse effect */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 1.5s infinite;
 }
 </style> 

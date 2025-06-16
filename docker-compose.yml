@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # نظام موازنة الحمل (nginx)
+  loadbalancer:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - server1
+      - server2
+    ports:
+      - "80:80" # HTTP
+      - "443:443" # HTTPS
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./data/certbot/conf:/etc/letsencrypt
+      - ./data/certbot/www:/var/www/certbot
+    networks:
+      - spacechat-network
+
+  # خادم Redis للتخزين المؤقت وتمكين تبادل الرسائل بين المثيلات
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - spacechat-network
+
+  # مثيل الخادم الأول
+  server1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - USE_REDIS=true
+      - REDIS_URL=redis://redis:6379
+      - SERVER_ID=server1
+    networks:
+      - spacechat-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # مثيل الخادم الثاني
+  server2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - USE_REDIS=true
+      - REDIS_URL=redis://redis:6379
+      - SERVER_ID=server2
+    networks:
+      - spacechat-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # خدمة مراقبة الأداء (اختيارية)
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - spacechat-network
+
+  # لوحة مراقبة (اختيارية)
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - spacechat-network
+    depends_on:
+      - prometheus
+
+networks:
+  spacechat-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  prometheus-data:
+  grafana-data: 

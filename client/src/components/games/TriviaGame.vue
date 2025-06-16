@@ -50,11 +50,35 @@
     
     <div class="mt-6 flex justify-end">
       <button 
-        @click="$emit('close')"
+        @click="confirmExit"
         class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
       >
-        Exit Game
+        Back to Games
       </button>
+    </div>
+  </div>
+  
+  <!-- Confirmation Dialog -->
+  <div v-if="showConfirmation" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div class="bg-gray-800 p-4 rounded-lg max-w-xs w-full text-center">
+      <h3 class="text-lg font-semibold mb-3 text-white">Are you sure?</h3>
+      <p class="text-sm text-gray-300 mb-4">
+        Leaving the game will end it for your partner too.
+      </p>
+      <div class="flex justify-center gap-3">
+        <button 
+          @click="showConfirmation = false" 
+          class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+        >
+          Cancel
+        </button>
+        <button 
+          @click="exitGame" 
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm"
+        >
+          Leave
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -79,6 +103,7 @@ const currentQuestion = ref<TriviaQuestion | null>(null);
 const shuffledAnswers = ref<string[]>([]);
 const selectedAnswer = ref<string | null>(null);
 const score = ref(0);
+const showConfirmation = ref(false);
 const isCorrect = computed(() => 
   selectedAnswer.value === currentQuestion.value?.correct_answer
 );
@@ -153,6 +178,26 @@ function requestQuestion() {
 // Get next question
 function nextQuestion() {
   requestQuestion();
+}
+
+// Confirmation dialog
+function confirmExit() {
+  showConfirmation.value = true;
+}
+
+function exitGame() {
+  showConfirmation.value = false;
+  
+  // Notify server about leaving if needed
+  if (socket.value) {
+    socket.value.emit('game-notification', {
+      type: 'leave',
+      message: 'Your partner has left the game'
+    });
+  }
+  
+  // Close the game
+  emit('close');
 }
 
 // Setup and teardown

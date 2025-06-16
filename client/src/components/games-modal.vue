@@ -193,20 +193,51 @@ const selectGame = (gameType: string) => {
     to: props.partnerId,
     isFirstPlayer: true
   });
+
+  // Send game invitation to partner
+  if (socket.value && props.partnerId) {
+    // Generate a unique invitation ID
+    const inviteId = `invite-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    
+    // Send the invitation
+    socket.value.emit('game-invite', {
+      gameType,
+      to: props.partnerId,
+      inviteId: inviteId
+    });
+    
+    console.log(`Sent game invitation for ${gameType} to ${props.partnerId}`);
+    
+    // Show a toast or notification that invitation was sent
+    showToastMessage(`Invitation sent! Waiting for response...`, 'info');
+  }
 };
 
 // Close game
 const closeGame = () => {
   // Notify partner that we're leaving the game but still in chat
-  if (gameRoomId.value && props.partnerId) {
+  if (props.partnerId) {
     socket.value?.emit('game-leave-notification', {
       gameType: selectedGame.value || 'unknown',
       to: props.partnerId,
       message: 'Your partner returned to the game menu'
     });
     
-    // Also leave the room to clean up server resources
-    socket.value?.emit('game-leave-room', {
+    // Send notification to partner first
+    if (socket.value) {
+      socket.value.emit('game-notification', {
+        gameType: selectedGame.value || 'unknown',
+        to: props.partnerId,
+        message: 'Your partner has left the game',
+        type: 'leave'
+      });
+    }
+    
+    // Small delay before leaving room to ensure notification is sent
+    setTimeout(() => {
+      // Leave the room to clean up server resources
+      if (gameRoomId.value && socket.value) {
+        socket.value.emit('game-leave-room', {
       roomId: gameRoomId.value,
       to: props.partnerId
     });
@@ -218,6 +249,15 @@ const closeGame = () => {
   isFirstPlayer.value = true;
   gameRoomId.value = null;
   partnerReady.value = false;
+    }, 100);
+  } else {
+    // Reset state immediately if no partner
+    selectedGame.value = null;
+    errorMessage.value = null;
+    isFirstPlayer.value = true;
+    gameRoomId.value = null;
+    partnerReady.value = false;
+  }
 };
 
 // Handle game error
@@ -229,6 +269,25 @@ const handleGameError = (error: string) => {
 // Set up socket event listeners
 onMounted(() => {
   logDebugInfo('Setting up game events');
+  
+  // Add event listener for direct game selection from notifications
+  document.addEventListener('select-game', ((event: CustomEvent) => {
+    const { gameType, partnerId: gamePartnerId } = event.detail;
+    
+    if (gameType && gamePartnerId && gamePartnerId === props.partnerId) {
+      logDebugInfo(`Received direct game selection: ${gameType}`);
+      selectedGame.value = gameType;
+      errorMessage.value = null;
+      isFirstPlayer.value = false; // We're joining as second player
+      partnerReady.value = true;
+      
+      // Create a deterministic room ID based on user IDs
+      const userIds = [userId.value, props.partnerId].sort();
+      gameRoomId.value = `${gameType}-${userIds[0]}-${userIds[1]}`;
+      
+      logDebugInfo(`Created game room: ${gameRoomId.value}`);
+    }
+  }) as EventListener);
   
   // Handle game invites and room joins
   socket.value?.on('game-room-invite', (data: any) => {
@@ -267,9 +326,16 @@ onMounted(() => {
   // Handle partner leaving
   socket.value?.on('game-partner-left', (data: any) => {
     if (selectedGame.value) {
-      errorMessage.value = "Your partner left the game.";
-      logDebugInfo('Partner left the game');
+      // إغلاق اللعبة بدون إظهار رسالة خطأ
+      logDebugInfo('Partner left the game - closing silently');
+      
+      // إعادة تعيين الحالة بدون عرض رسالة خطأ
       selectedGame.value = null;
+      gameRoomId.value = null;
+      partnerReady.value = false;
+      
+      // تأكد من إزالة أي رسائل خطأ موجودة
+      errorMessage.value = null;
     }
   });
   
@@ -296,6 +362,9 @@ onUnmounted(() => {
       to: props.partnerId
     });
   }
+  
+  // Remove event listener
+  document.removeEventListener('select-game', (() => {}) as EventListener);
 });
 
 // Watch for dialog close to reset game state
@@ -304,6 +373,37 @@ watch(() => props.isOpen, (isOpen) => {
     closeGame();
   }
 });
+
+// Helper function to show toast messages
+const showToastMessage = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  // Create a div for the toast notification
+  const toast = document.createElement('div');
+  
+  // Set class based on type
+  let bgColor = 'bg-blue-600';
+  if (type === 'success') bgColor = 'bg-emerald-600';
+  if (type === 'error') bgColor = 'bg-red-600';
+  
+  // Apply styles
+  toast.className = `fixed bottom-4 right-4 ${bgColor} text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-fade-in`;
+  toast.style.animationDuration = '0.3s';
+  
+  // Add content
+  toast.innerHTML = message;
+  
+  // Add to DOM
+  document.body.appendChild(toast);
+  
+  // Remove after delay
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s ease';
+    
+    setTimeout(() => {
+      document.body.removeChild(toast);
+    }, 300);
+  }, 3000);
+};
 </script>
 
 <style scoped>

@@ -1,5 +1,6 @@
 import './assets/main.css'
 import './index.css'
+import './assets/games-responsive.css'
 
 import { createApp } from 'vue'
 import App from './App.vue'

@@ -40,7 +40,7 @@
                 {{ formatTime(message.timestamp) }}
               </span>
             </div>
-            <p class="mt-1 text-white break-words">{{ message.message }}</p>
+            <p class="mt-1 text-white break-words">{{ message.text || message.message }}</p>
           </div>
         </div>
       </div>

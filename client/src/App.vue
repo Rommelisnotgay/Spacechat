@@ -6,6 +6,11 @@
 
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
+import { ref, onMounted, onUnmounted } from 'vue';
+import { useActivityTracker } from './services/activityTracker';
+
+// تضمين نظام تتبع النشاط
+const { isActive } = useActivityTracker();
 </script>
 
 <style>

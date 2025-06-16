@@ -26,12 +26,17 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^24.0.1",
     "@types/uuid": "^10.0.0",
     "concurrently": "^8.2.2",
     "rimraf": "^5.0.5"
   },
   "dependencies": {
+    "@types/crypto-js": "^4.2.2",
+    "artillery": "^2.0.23",
     "axios": "^1.9.0",
-    "uuid": "^11.1.0"
+    "crypto-js": "^4.2.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.2"
   }
 }

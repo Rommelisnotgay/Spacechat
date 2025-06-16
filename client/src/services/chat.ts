@@ -1,12 +1,27 @@
 import { ref, watch, shallowRef } from 'vue';
 import { useSocket } from './socket';
 import { useLocalStorage } from './storage';
+import { v4 as uuidv4 } from 'uuid';
+import { ChatModel } from '../models/ChatModel';
+import { ChatController } from '../models/ChatController';
 
 // Types
 export interface ChatMessage {
+  id: string;           // معرف فريد للرسالة
   sender: 'me' | 'partner';
   text: string;
   timestamp: number;
+  status: MessageStatus; // حالة الرسالة
+  retryCount: number;    // عدد محاولات إعادة الإرسال
+}
+
+// حالات الرسالة
+export enum MessageStatus {
+  SENDING = 'sending',     // جاري الإرسال
+  SENT = 'sent',           // تم الإرسال (وصلت للخادم)
+  DELIVERED = 'delivered', // تم التسليم (وصلت للمستلم)
+  READ = 'read',           // تم القراءة
+  FAILED = 'failed'        // فشل الإرسال
 }
 
 // Global state for chat
@@ -14,122 +29,46 @@ const allMessages = ref<Record<string, ChatMessage[]>>({});
 const currentPartnerId = ref<string | null>(null);
 const unreadMessages = ref<Record<string, boolean>>({});
 const isListening = ref(false);
+const pendingMessages = ref<Record<string, ChatMessage[]>>({}); // رسائل قيد الانتظار
 
 // Debug flag
 const DEBUG = true;
 
-// Create a singleton instance to ensure the service is only initialized once
+// Create singleton instances
+let chatModel: ChatModel | null = null;
+let chatController: ChatController | null = null;
 let isInitialized = false;
 
 /**
  * Centralized chat service to handle messaging across components
  */
 export function useChat() {
-  const { socket, userId } = useSocket();
   const storage = useLocalStorage();
-
+  const { socket, userId, isConnected } = useSocket();
+  
   // Initialize the service if not already done
   if (!isInitialized) {
-    if (DEBUG) console.log('[ChatService] Initializing chat service');
-    initializeChatService();
+    console.log('[ChatService] Initializing chat service with MVC architecture');
+    
+    // Create model and controller
+    chatModel = new ChatModel(storage);
+    chatController = new ChatController(chatModel);
+    
+    // Watch for connection state changes
     isInitialized = true;
-  } else {
-    if (DEBUG) console.log('[ChatService] Using existing chat service instance');
   }
-
-  /**
-   * Initialize the chat service
-   */
-  function initializeChatService() {
-    // Set up global socket listeners
-    setupGlobalSocketListeners();
-
-    // Load all saved chats from localStorage
-    loadAllChats();
-
-    // Watch for changes to messages and save them
-    watch(allMessages, () => {
-      saveAllChats();
-    }, { deep: true });
-
-    // When socket changes (after reconnection), ensure we're still listening
-    watch(() => socket.value, (newSocket) => {
-      if (newSocket && !isListening.value) {
-        if (DEBUG) console.log('[ChatService] Socket reconnected, setting up listeners again');
-        setupGlobalSocketListeners();
-      }
-    });
-  }
-
-  /**
-   * Set up global socket listeners for chat messages
-   */
-  function setupGlobalSocketListeners() {
-    if (!socket.value) {
-      if (DEBUG) console.log('[ChatService] No socket available, cannot set up listeners');
-      return;
-    }
-    
-    if (isListening.value) {
-      // Remove existing listeners to prevent duplicates
-      if (DEBUG) console.log('[ChatService] Removing existing chat-message listener');
-      socket.value.off('chat-message');
-      isListening.value = false;
-    }
-
-    if (DEBUG) console.log('[ChatService] Setting up chat-message listener');
-    
-    // Listen for incoming messages globally
-    socket.value.on('chat-message', (data: { text: string; from: string; timestamp: number }) => {
-      if (DEBUG) console.log('[ChatService] Received chat message:', data);
-      
-      // Create conversation key
-      const partnerId = data.from;
-      const conversationKey = getConversationKey(partnerId);
-
-      if (DEBUG) console.log(`[ChatService] Conversation key: ${conversationKey}, current partner: ${currentPartnerId.value}`);
-
-      // Initialize conversation if it doesn't exist
-      if (!allMessages.value[conversationKey]) {
-        allMessages.value[conversationKey] = [];
-      }
-
-      // Add message to conversation
-      allMessages.value[conversationKey].push({
-        sender: 'partner',
-        text: data.text,
-        timestamp: data.timestamp || Date.now()
-      });
-
-      // Mark as unread if it's not the current conversation
-      if (partnerId !== currentPartnerId.value) {
-        unreadMessages.value[partnerId] = true;
-        if (DEBUG) console.log(`[ChatService] Marked message from ${partnerId} as unread`);
-      }
-
-      // Save to localStorage
-      saveAllChats();
-      
-      if (DEBUG) console.log(`[ChatService] Updated messages:`, allMessages.value[conversationKey]);
-    });
-
-    isListening.value = true;
-    if (DEBUG) console.log('[ChatService] Chat message listener setup complete');
-  }
-
+  
   /**
    * Set the current partner ID
    */
   function setCurrentPartner(partnerId: string | null) {
-    if (DEBUG) console.log(`[ChatService] Setting current partner: ${partnerId}`);
     currentPartnerId.value = partnerId;
-
-    // Clear unread messages for this partner
-    if (partnerId) {
-      unreadMessages.value[partnerId] = false;
+    
+    if (chatController) {
+      chatController.setCurrentPartner(partnerId);
     }
   }
-
+  
   /**
    * Send a message to the current partner
    */
@@ -137,167 +76,79 @@ export function useChat() {
     // Use specified partner or current partner
     const partnerId = toPartnerId || currentPartnerId.value;
     
-    if (!partnerId || !text.trim() || !socket.value) {
-      if (DEBUG) console.log(`[ChatService] Cannot send message: partnerId=${partnerId}, text=${text.trim() ? 'present' : 'empty'}, socket=${socket.value ? 'present' : 'not present'}`);
+    if (!partnerId || !text.trim() || !chatController) {
       return false;
     }
-
-    if (DEBUG) console.log(`[ChatService] Sending message to ${partnerId}: ${text}`);
-
-    // Create conversation key
-    const conversationKey = getConversationKey(partnerId);
-
-    // Initialize conversation if it doesn't exist
-    if (!allMessages.value[conversationKey]) {
-      allMessages.value[conversationKey] = [];
-    }
-
-    // Add message to our local state
-    const timestamp = Date.now();
-    allMessages.value[conversationKey].push({
-      sender: 'me',
-      text: text.trim(),
-      timestamp
-    });
-
-    // Send message to partner
-    socket.value.emit('chat-message', {
-      text: text.trim(),
-      to: partnerId
-    });
     
-    if (DEBUG) console.log(`[ChatService] Message sent, current messages:`, allMessages.value[conversationKey]);
-
-    return true;
+    return chatController.sendMessage(text, partnerId);
   }
-
+  
+  /**
+   * Resend a failed message
+   */
+  function resendMessage(messageId: string, partnerId: string) {
+    if (!chatController) return false;
+    return chatController.resendMessage(messageId, partnerId);
+  }
+  
   /**
    * Get messages for a specific partner
    */
-  function getMessages(partnerId: string | null): ChatMessage[] {
-    if (!partnerId) return [];
-
-    const conversationKey = getConversationKey(partnerId);
-    const messages = allMessages.value[conversationKey] || [];
-    
-    if (DEBUG) console.log(`[ChatService] Getting messages for ${partnerId}, found ${messages.length} messages`);
-    return messages;
+  function getMessages(partnerId: string | null) {
+    if (!partnerId || !chatController) return [];
+    return chatController.getMessages(partnerId);
   }
-
+  
   /**
    * Check if there are unread messages from a partner
    */
-  function hasUnreadMessages(partnerId: string | null): boolean {
-    if (!partnerId) return false;
-    const hasUnread = !!unreadMessages.value[partnerId];
-    if (DEBUG) console.log(`[ChatService] Checking unread for ${partnerId}: ${hasUnread}`);
-    return hasUnread;
+  function hasUnreadMessages(partnerId: string | null) {
+    if (!partnerId || !chatController) return false;
+    return chatController.hasUnreadMessages(partnerId);
   }
-
+  
   /**
    * Mark messages as read for a partner
    */
   function markAsRead(partnerId: string | null) {
-    if (!partnerId) return;
-    if (DEBUG) console.log(`[ChatService] Marking messages as read for ${partnerId}`);
-    unreadMessages.value[partnerId] = false;
+    if (!partnerId || !chatController) return;
+    chatController.markAsRead(partnerId);
   }
-
+  
   /**
-   * Get a unique key for a conversation
+   * Handle typing event
    */
-  function getConversationKey(partnerId: string): string {
-    if (!userId.value) return partnerId;
-    
-    // Create a consistent key regardless of who initiated the chat
-    const ids = [userId.value, partnerId].sort();
-    return `${ids[0]}_${ids[1]}`;
+  function handleTyping(partnerId: string | null) {
+    if (!partnerId || !chatController) return;
+    chatController.sendTypingIndicator(partnerId);
   }
-
-  /**
-   * Save all chats to localStorage
-   */
-  function saveAllChats() {
-    if (!storage.isAvailable.value) {
-      if (DEBUG) console.log('[ChatService] localStorage not available, cannot save chats');
-      return;
-    }
-
-    try {
-      // Save messages
-      storage.setItem('chat_messages', JSON.stringify(allMessages.value));
-      
-      // Save unread status
-      storage.setItem('chat_unread', JSON.stringify(unreadMessages.value));
-      
-      if (DEBUG) console.log('[ChatService] Saved chats to localStorage');
-    } catch (error) {
-      console.error('[ChatService] Failed to save chats:', error);
-    }
-  }
-
-  /**
-   * Load all saved chats from localStorage
-   */
-  function loadAllChats() {
-    if (!storage.isAvailable.value) {
-      if (DEBUG) console.log('[ChatService] localStorage not available, cannot load chats');
-      return;
-    }
-
-    try {
-      // Load messages
-      const savedMessages = storage.getItem('chat_messages');
-      if (savedMessages) {
-        allMessages.value = JSON.parse(savedMessages);
-        if (DEBUG) console.log('[ChatService] Loaded messages from localStorage:', Object.keys(allMessages.value).length, 'conversations');
-      }
-
-      // Load unread status
-      const savedUnread = storage.getItem('chat_unread');
-      if (savedUnread) {
-        unreadMessages.value = JSON.parse(savedUnread);
-        if (DEBUG) console.log('[ChatService] Loaded unread status from localStorage');
-      }
-    } catch (error) {
-      console.error('[ChatService] Failed to load chats:', error);
-    }
-  }
-
+  
   /**
    * Clear chat history for a specific partner
    */
   function clearChat(partnerId: string) {
-    if (!partnerId) return;
-
-    const conversationKey = getConversationKey(partnerId);
-    if (allMessages.value[conversationKey]) {
-      allMessages.value[conversationKey] = [];
-      saveAllChats();
-      if (DEBUG) console.log(`[ChatService] Cleared chat for ${partnerId}`);
-    }
+    if (!chatController) return;
+    chatController.clearChat(partnerId);
   }
-
+  
   /**
    * Clear all chat history
    */
   function clearAllChats() {
-    allMessages.value = {};
-    unreadMessages.value = {};
-    saveAllChats();
-    if (DEBUG) console.log('[ChatService] Cleared all chats');
+    if (!chatController) return;
+    chatController.clearAllChats();
   }
-
+  
   // Return the public API
   return {
-    messages: allMessages,  // Removed shallowRef to ensure reactivity
-    unreadMessages: unreadMessages,  // Removed shallowRef
     currentPartnerId,
     setCurrentPartner,
     sendMessage,
+    resendMessage,
     getMessages,
     hasUnreadMessages,
     markAsRead,
+    handleTyping,
     clearChat,
     clearAllChats
   };

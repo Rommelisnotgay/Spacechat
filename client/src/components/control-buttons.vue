@@ -6,11 +6,11 @@
       <button
         @click="toggleMute"
         class="w-11 h-11 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all shadow-xl transform hover:scale-110"
-        :class="isMuted ? 'bg-gradient-to-r from-red-400 to-pink-400 shadow-red-400/70' : 'bg-gradient-to-r from-emerald-400 to-green-400 hover:from-green-400 hover:to-emerald-400 shadow-emerald-400/70'"
+        :class="internalMuteState ? 'bg-gradient-to-r from-red-400 to-pink-400 shadow-red-400/70' : 'bg-gradient-to-r from-emerald-400 to-green-400 hover:from-green-400 hover:to-emerald-400 shadow-emerald-400/70'"
         :disabled="isProcessing"
       >
         <div class="relative">
-          <span v-if="!isMuted" class="text-white text-base sm:text-lg md:text-xl">🎤</span>
+          <span v-if="!internalMuteState" class="text-white text-base sm:text-lg md:text-xl">🎤</span>
           <span v-else class="text-white text-base sm:text-lg md:text-xl">🔇</span>
           <span v-if="isProcessing" class="absolute -top-1 -right-1 w-2 h-2 sm:w-3 sm:h-3 bg-yellow-300 rounded-full animate-pulse"></span>
         </div>
@@ -60,7 +60,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { useMicrophoneState } from '@/services/storage';
 
 const props = defineProps({
   isMuted: {
@@ -85,12 +86,29 @@ const emit = defineEmits([
 // منع النقرات المتكررة
 const isProcessing = ref(false);
 
+// استخدام حالة داخلية لكتم الصوت لتتبع التغييرات من مصادر مختلفة
+const internalMuteState = ref(props.isMuted);
+
+// مشاهدة تغييرات حالة كتم الصوت من الخارج
+watch(() => props.isMuted, (newValue) => {
+  internalMuteState.value = newValue;
+});
+
+// الاستماع لحدث تغيير حالة كتم الصوت
+function onMicrophoneStateChanged(event: CustomEvent) {
+  const { isMuted } = event.detail;
+  internalMuteState.value = isMuted;
+}
+
 // Enhanced mute toggle function to ensure audio works properly
 function toggleMute() {
   if (isProcessing.value) return; // منع النقرات المتكررة
   
   isProcessing.value = true;
   emit('toggle-mute');
+  
+  // تحديث الحالة الداخلية مؤقتًا (سيتم تحديثها بشكل نهائي عند استلام الحدث)
+  // internalMuteState.value = !internalMuteState.value;
   
   // تقليل وقت القفل لزيادة الاستجابة
   setTimeout(() => {
@@ -111,4 +129,21 @@ function toggleMute() {
     }
   }, 300);
 }
+
+// استعادة حالة كتم الصوت من التخزين عند تحميل المكون
+onMounted(() => {
+  const { getSavedMicrophoneState } = useMicrophoneState();
+  const savedState = getSavedMicrophoneState();
+  if (savedState !== null) {
+    internalMuteState.value = savedState;
+  }
+  
+  // إضافة مستمع لحدث تغيير حالة كتم الصوت
+  window.addEventListener('microphone-state-changed', onMicrophoneStateChanged as EventListener);
+});
+
+// تنظيف المستمعين عند إزالة المكون
+onUnmounted(() => {
+  window.removeEventListener('microphone-state-changed', onMicrophoneStateChanged as EventListener);
+});
 </script> 

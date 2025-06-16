@@ -152,11 +152,35 @@
     <!-- Game Controls -->
     <div class="flex justify-between">
       <button 
-        @click="$emit('back')" 
+        @click="confirmBackToGames" 
         class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
       >
         Back to Games
       </button>
+    </div>
+  </div>
+
+  <!-- Confirmation Dialog -->
+  <div v-if="showConfirmation" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div class="bg-gray-800 p-4 rounded-lg max-w-xs w-full text-center">
+      <h3 class="text-lg font-semibold mb-3 text-white">Are you sure?</h3>
+      <p class="text-sm text-gray-300 mb-4">
+        Leaving the game will end it for your partner too.
+      </p>
+      <div class="flex justify-center gap-3">
+        <button 
+          @click="showConfirmation = false" 
+          class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+        >
+          Cancel
+        </button>
+        <button 
+          @click="confirmExit" 
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm"
+        >
+          Leave
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -199,6 +223,9 @@ const result = ref<'win' | 'lose' | 'tie' | null>(null);
 const countdownTimer = ref(CHOICE_TIMEOUT);
 const countdownInterval = ref<number | null>(null);
 
+// Confirmation dialog
+const showConfirmation = ref(false);
+
 // Computed properties
 const resultText = computed(() => {
   if (result.value === 'win') return 'You Win!';
@@ -234,7 +261,7 @@ const startRound = () => {
 const makeChoice = (choice: string) => {
   playerChoice.value = choice;
   
-  // Send choice to partner
+  // Send choice to partner - تنسيق متوافق مع الخادم
   socket.value?.emit('game-move', {
     gameType: 'rock-paper-scissors',
     move: {
@@ -243,6 +270,8 @@ const makeChoice = (choice: string) => {
     },
     to: props.partnerId
   });
+  
+  console.log(`Sent move to server: ${choice}, round: ${roundNumber.value}`);
   
   // If both players have chosen, determine the result
   if (partnerChoice.value) {
@@ -311,6 +340,38 @@ const stopCountdown = () => {
   }
 };
 
+// Confirmation dialog functions
+const confirmBackToGames = () => {
+  showConfirmation.value = true;
+};
+
+const confirmExit = () => {
+  showConfirmation.value = false;
+  
+  // إرسال إشعار للشريك قبل المغادرة
+  if (socket.value && props.partnerId) {
+    socket.value.emit('game-notification', {
+      to: props.partnerId,
+      message: 'Your partner has left the game',
+      type: 'leave'
+    });
+    
+    // تأخير صغير قبل مغادرة الغرفة للتأكد من إرسال الإشعار
+    setTimeout(() => {
+      socket.value?.emit('game-leave-room', {
+        roomId: `rps-${props.partnerId}`,
+        to: props.partnerId
+      });
+      
+      // العودة إلى قائمة الألعاب
+      emit('back');
+    }, 200);
+  } else {
+    // إذا لم يكن هناك اتصال، العودة مباشرة
+    emit('back');
+  }
+};
+
 // Handle socket events
 onMounted(() => {
   // Set initial game state based on whether partner is ready
@@ -321,7 +382,25 @@ onMounted(() => {
   // Listen for partner's moves
   socket.value?.on('game-move', (data: any) => {
     if (data.from === props.partnerId && data.gameType === 'rock-paper-scissors') {
-      partnerChoice.value = data.move.choice;
+      // استخراج الحركة بطريقة آمنة تدعم مختلف التنسيقات
+      let partnerMoveChoice: string | null = null;
+      
+      if (typeof data.move === 'string') {
+        // التنسيق القديم: سلسلة نصية مباشرة
+        partnerMoveChoice = data.move;
+      } else if (typeof data.move === 'object' && data.move !== null) {
+        // التنسيق الجديد: كائن مع خاصية choice
+        partnerMoveChoice = data.move.choice;
+      }
+      
+      // التحقق من صحة الحركة
+      if (!partnerMoveChoice || !['rock', 'paper', 'scissors'].includes(partnerMoveChoice)) {
+        console.error('Received invalid move from partner:', data.move);
+        return;
+      }
+      
+      console.log(`Received move from partner: ${partnerMoveChoice}`);
+      partnerChoice.value = partnerMoveChoice;
       
       // If both players have chosen, determine the result
       if (playerChoice.value) {
@@ -350,10 +429,32 @@ onMounted(() => {
   });
   
   // Listen for partner leaving
-  socket.value?.on('game-partner-left', () => {
+  socket.value?.on('game-partner-left', (data: any) => {
+    if (data.from === props.partnerId) {
+      // إيقاف العد التنازلي
+      stopCountdown();
+      
+      // تغيير حالة اللعبة
     gameState.value = 'waiting';
-    stopCountdown();
-    emit('error', 'Your partner has left the game.');
+      
+      // عرض رسالة توضيحية للمستخدم بدلاً من رسالة خطأ
+      const partnerLeftMessage = document.createElement('div');
+      partnerLeftMessage.className = 'fixed top-4 right-4 bg-yellow-600/80 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+      partnerLeftMessage.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span>⚠️</span>
+          <span>Your partner has left the game</span>
+        </div>
+      `;
+      document.body.appendChild(partnerLeftMessage);
+      
+      // إزالة الرسالة بعد 3 ثوانٍ
+      setTimeout(() => {
+        document.body.removeChild(partnerLeftMessage);
+        // العودة إلى قائمة الألعاب
+        handleBackToGames();
+      }, 3000);
+    }
   });
   
   // Listen for game reset
@@ -370,6 +471,23 @@ onMounted(() => {
 // Clean up
 onUnmounted(() => {
   stopCountdown();
+  
+  // إرسال إشعار للشريك قبل المغادرة
+  if (socket.value && props.partnerId) {
+    socket.value.emit('game-notification', {
+      to: props.partnerId,
+      message: 'Your partner has left the game',
+      type: 'leave'
+    });
+    
+    // تأخير صغير قبل مغادرة الغرفة للتأكد من إرسال الإشعار
+    setTimeout(() => {
+      socket.value?.emit('game-leave-room', {
+        roomId: `rps-${props.partnerId}`,
+        to: props.partnerId
+      });
+    }, 200);
+  }
   
   // Remove event listeners
   socket.value?.off('game-move');

@@ -1,349 +1,581 @@
 import { Server, Socket } from 'socket.io';
+import { 
+  GameRoomJoin, 
+  GameRoomLeave, 
+  GameMove, 
+  GameReset,
+  GameStartRound,
+  GameWordSetup,
+  GameGuessResult,
+  GameError
+} from '../models/types';
+import { gameController } from '../controllers/gameController';
+import { userService } from '../services/userService';
+import { gameService } from '../services/gameService';
+import { errorHandler, ErrorType } from '../models/ErrorHandler';
+import { 
+  gameRoomJoinSchema, 
+  gameRoomLeaveSchema, 
+  ticTacToeMoveSchema,
+  rockPaperScissorsMoveSchema,
+  wordGalaxyMoveSchema,
+  gameResetSchema,
+  gameStartRoundSchema,
+  gameWordSetupSchema
+} from '../validation/gameSchemas';
+import { validate, getGameSpecificSchema } from '../validation/validator';
 
-interface GameRoomJoin {
-  gameType: string;
-  roomId: string;
-  to: string;
-  isFirstPlayer: boolean;
-}
-
-interface GameRoomLeave {
-  roomId: string;
-  to: string;
-}
-
-interface GameMove {
-  gameType: string;
-  move: any;
-  to: string;
-}
-
-interface GameReset {
-  gameType: string;
-  to: string;
-  swapRoles?: boolean;
-  shouldBeCreator?: boolean;
-  roundCount?: number;
-  guesserScore?: number;
-  creatorScore?: number;
-}
-
-interface GameError {
-  message: string;
-  to: string;
-  gameType?: string;
-}
-
-interface GameStartRound {
-  gameType: string;
-  to: string;
-  round: number;
-}
-
-interface GameWordSetup {
-  gameType: string;
-  to: string;
-  wordLength: number;
-  difficulty: string;
-}
-
-interface GameGuessResult {
-  gameType: string;
-  to: string;
-  result: {
-    word: string;
-    matches: number;
-    revealedPositions: number[];
-    isCorrect: boolean;
-  };
-}
-
-type UserInfo = {
-  socketId: string;
-  vibe?: string;
-  preferences?: Record<string, any>;
-  nickname?: string;
-};
-
-// Game types that are implemented
-const IMPLEMENTED_GAMES = ['tic-tac-toe', 'rock-paper-scissors', 'word-galaxy'];
-
-// Active game rooms
-const gameRooms = new Map<string, {
-  gameType: string;
-  players: string[];
-  createdAt: number;
-}>();
-
-export const setupGameEvents = (io: Server, socket: Socket, activeUsers: Map<string, UserInfo>) => {
-  // Join game room
+/**
+ * Sets up game-related socket event handlers
+ * @param io - Socket.IO server instance
+ * @param socket - Client socket connection
+ */
+export const setupGameEvents = (io: Server, socket: Socket) => {
+  // Set socket server in the game controller and error handler
+  gameController.setSocketServer(io);
+  errorHandler.setSocketServer(io);
+  
+  /**
+   * Handle game room join request
+   * Players can create a new room or join an existing one
+   */
   socket.on('game-join-room', (data: GameRoomJoin) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      // التحقق من صحة البيانات باستخدام Zod
+      const validationResult = validate(gameRoomJoinSchema, data);
+      
+      if (!validationResult.success) {
+        socket.emit('game-error', {
+          message: `Invalid data: ${validationResult.error}`,
+          from: 'system'
+        });
+        return;
+      }
+      
+      // استخدام البيانات المتحقق منها
+      const validData = validationResult.data;
+      
+      const targetUserInfo = userService.getUserInfo(validData.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system'
         });
         return;
       }
       
-      // Check if game is implemented
-      if (!IMPLEMENTED_GAMES.includes(data.gameType)) {
-        socket.emit('game-error', {
-          message: `Game type ${data.gameType} is not implemented yet.`,
-          from: 'system'
-        });
-        return;
-      }
+      // تمت إزالة التحقق من نوع اللعبة هنا لأنه تم تضمينه في مخطط التحقق
       
-      // Check if this is a new room or joining existing
-      if (data.isFirstPlayer) {
-        // Creating a new room
-        gameRooms.set(data.roomId, {
-          gameType: data.gameType,
-          players: [socket.data.userId],
-          createdAt: Date.now()
-        });
+      // Check if this is a new room or joining an existing room
+      if (validData.isFirstPlayer) {
+        // Create a new game room
+        const game = gameController.createGameRoom(validData.roomId, validData.gameType, socket.data.userId);
         
-        console.log(`Game room created: ${data.roomId} for game ${data.gameType}`);
-        
-        // Invite partner to join
-        io.to(targetUserInfo.socketId).emit('game-room-invite', {
-          gameType: data.gameType,
-          roomId: data.roomId,
-          from: socket.data.userId
-        });
-      } else {
-        // Joining existing room
-        const room = gameRooms.get(data.roomId);
-        
-        if (!room) {
+        if (!game) {
           socket.emit('game-error', {
-            message: "The game room you're trying to join doesn't exist.",
+            message: "Failed to create game room.",
             from: 'system'
           });
           return;
         }
         
-        // Add player to room
-        if (!room.players.includes(socket.data.userId)) {
-          room.players.push(socket.data.userId);
+        // Invite the partner to join
+        io.to(targetUserInfo.socketId).emit('game-room-invite', {
+          gameType: validData.gameType,
+          roomId: validData.roomId,
+          from: socket.data.userId
+        });
+        
+        // تسجيل الحدث للمساعدة في تتبع الأخطاء
+        console.log(`Game room created: ${validData.roomId}, type: ${validData.gameType}, by: ${socket.data.userId}`);
+      } else {
+        // Join an existing room
+        const game = gameController.joinGameRoom(validData.roomId, socket.data.userId);
+        
+        if (!game) {
+          socket.emit('game-error', {
+            message: "The room you are trying to join does not exist.",
+            from: 'system'
+          });
+          return;
         }
         
-        // Notify the room creator that partner has joined
-        const roomCreator = room.players[0];
-        const roomCreatorInfo = activeUsers.get(roomCreator);
+        // Get the game state
+        const gameState = game.getState();
+        
+        // Notify the room creator that the partner has joined
+        const roomCreator = gameState.players[0];
+        const roomCreatorInfo = userService.getUserInfo(roomCreator);
         
         if (roomCreatorInfo) {
           io.to(roomCreatorInfo.socketId).emit('game-partner-joined', {
             from: socket.data.userId,
-            gameType: data.gameType
+            gameType: validData.gameType
           });
           
-          // Also notify this player that they successfully joined
+          // Also notify this player that they joined successfully
           socket.emit('game-partner-joined', {
             from: roomCreator,
-            gameType: data.gameType
+            gameType: validData.gameType
           });
+          
+          // تسجيل الحدث للمساعدة في تتبع الأخطاء
+          console.log(`Player ${socket.data.userId} joined room: ${validData.roomId}`);
         }
-        
-        console.log(`Player ${socket.data.userId} joined game room: ${data.roomId}`);
       }
     } catch (error) {
       console.error('Error in game-join-room:', error);
       socket.emit('game-error', {
-        message: "Failed to join game room due to a server error.",
+        message: "Failed to join game room due to server error.",
         from: 'system'
       });
     }
   });
   
-  // Game invite (direct without room)
-  socket.on('game-invite', (data: { gameType: string; to: string }) => {
+  /**
+   * Handle direct game invitation (without room)
+   */
+  socket.on('game-invite', (data: { gameType: string; to: string; inviteId?: string }) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system'
         });
         return;
       }
       
-      // Forward invitation to partner
+      // Register users as partners before sending the invitation
+      // This prevents "left the game" messages when accepting invites
+      socket.data.partnerId = data.to;
+      
+      // Generate invite ID if not provided
+      const inviteId = data.inviteId || `invite-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // Forward the invitation to the partner
       io.to(targetUserInfo.socketId).emit('game-invite', {
         gameType: data.gameType,
-        from: socket.data.userId
+        from: socket.data.userId,
+        inviteId: inviteId
       });
       
-      console.log(`Game invite: ${socket.data.userId} invited ${data.to} to play ${data.gameType}`);
+      // Send confirmation back to sender
+      socket.emit('game-invite-sent', {
+        to: data.to,
+        gameType: data.gameType,
+        inviteId: inviteId
+      });
+      
+      console.log(`Game invite sent: ${socket.data.userId} invited ${data.to} to play ${data.gameType} with ID ${inviteId}`);
     } catch (error) {
       console.error('Error in game-invite:', error);
       socket.emit('game-error', {
-        message: "Failed to send game invitation due to a server error.",
+        message: "Failed to send game invitation due to server error.",
         from: 'system'
       });
     }
   });
   
-  // Game invite accept
-  socket.on('game-invite-accept', (data: { gameType: string; to: string }) => {
+  /**
+   * Handle game invitation acceptance
+   */
+  socket.on('game-invite-accept', (data: { gameType: string; to: string; inviteId?: string }) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system'
         });
         return;
       }
       
+      // Update current user's partner
+      socket.data.partnerId = data.to;
+      
+      // Get target user's socket
+      const targetSocket = io.sockets.sockets.get(targetUserInfo.socketId);
+      if (targetSocket) {
+        // Update target user's partner
+        targetSocket.data.partnerId = socket.data.userId;
+      }
+      
       // Forward acceptance to partner
-      io.to(targetUserInfo.socketId).emit('game-invite-accept', {
+      io.to(targetUserInfo.socketId).emit('game-invite-accepted', {
         gameType: data.gameType,
-        from: socket.data.userId
+        from: socket.data.userId,
+        inviteId: data.inviteId
       });
       
       console.log(`Game invite accepted: ${socket.data.userId} accepted ${data.to}'s invite to play ${data.gameType}`);
     } catch (error) {
       console.error('Error in game-invite-accept:', error);
       socket.emit('game-error', {
-        message: "Failed to accept game invitation due to a server error.",
+        message: "Failed to accept game invitation due to server error.",
         from: 'system'
       });
     }
   });
   
-  // Game invite decline
-  socket.on('game-invite-decline', (data: { to: string }) => {
+  /**
+   * Handle game invitation decline
+   */
+  socket.on('game-invite-decline', (data: { to: string; inviteId?: string }) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
-        // Target user disconnected, no need to forward decline
+        // Target is not connected, no need to forward the decline
         return;
       }
       
       // Forward decline to partner
-      io.to(targetUserInfo.socketId).emit('game-invite-decline', {
-        from: socket.data.userId
+      io.to(targetUserInfo.socketId).emit('game-invite-declined', {
+        from: socket.data.userId,
+        inviteId: data.inviteId
       });
       
-      console.log(`Game invite declined: ${socket.data.userId} declined ${data.to}'s invite`);
+      console.log(`Game invite declined: ${socket.data.userId} declined invitation from ${data.to}`);
     } catch (error) {
       console.error('Error in game-invite-decline:', error);
     }
   });
   
-  // Leave game room
-  socket.on('game-leave-room', (data: GameRoomLeave) => {
+  /**
+   * Handle game invitation timeout
+   */
+  socket.on('game-invite-timeout', (data: { to: string; inviteId: string }) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
-      const room = gameRooms.get(data.roomId);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
-      if (room) {
-        // Remove player from room
-        const playerIndex = room.players.indexOf(socket.data.userId);
-        if (playerIndex !== -1) {
-          room.players.splice(playerIndex, 1);
-        }
-        
-        // If room is empty, delete it
-        if (room.players.length === 0) {
-          gameRooms.delete(data.roomId);
-          console.log(`Game room deleted: ${data.roomId}`);
-        }
+      if (!targetUserInfo) {
+        // Target is not connected, no need to forward the timeout
+        return;
       }
       
-      // Notify partner if they're still active
-      if (targetUserInfo) {
+      // Forward timeout to partner
+      io.to(targetUserInfo.socketId).emit('game-invite-timeout', {
+        from: socket.data.userId,
+        inviteId: data.inviteId
+      });
+      
+      console.log(`Game invite timed out: Invitation ${data.inviteId} from ${data.to} timed out`);
+    } catch (error) {
+      console.error('Error in game-invite-timeout:', error);
+    }
+  });
+  
+  /**
+   * Handle game join (after accepting invitation)
+   */
+  socket.on('game-join', (data: { gameType: string; partnerId: string }) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.partnerId);
+      
+      if (!targetUserInfo) {
+        socket.emit('game-error', {
+          message: "Could not find your partner. They may have disconnected.",
+          from: 'system'
+        });
+        return;
+      }
+      
+      // Generate a room ID
+      const roomId = `game-${data.gameType}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // Create a new game room
+      const game = gameController.createGameRoom(roomId, data.gameType, socket.data.userId);
+      
+      if (!game) {
+        socket.emit('game-error', {
+          message: "Failed to create game room.",
+          from: 'system'
+        });
+        return;
+      }
+      
+      // Confirm game join to the creator
+      socket.emit('game-join-confirmed', {
+        gameType: data.gameType,
+        roomId: roomId
+      });
+      
+      // Invite the partner to join the room
+      io.to(targetUserInfo.socketId).emit('game-room-invite', {
+        gameType: data.gameType,
+        roomId: roomId,
+        from: socket.data.userId
+      });
+      
+      console.log(`Game room created: ${roomId}, type: ${data.gameType}, by: ${socket.data.userId}`);
+    } catch (error) {
+      console.error('Error in game-join:', error);
+      socket.emit('game-error', {
+        message: "Failed to join game due to server error.",
+        from: 'system'
+      });
+    }
+  });
+  
+  /**
+   * Handle game room leave
+   */
+  socket.on('game-leave-room', (data: GameRoomLeave) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.to);
+      
+        // Remove player from room
+      const success = gameController.leaveGameRoom(data.roomId, socket.data.userId);
+      
+      if (success && targetUserInfo) {
+        // Add a small delay before notifying partner to ensure any previous notifications are processed
+        setTimeout(() => {
+          // Check if the socket is still connected
+          if (io.sockets.sockets.has(targetUserInfo.socketId)) {
+        // Notify partner
         io.to(targetUserInfo.socketId).emit('game-partner-left', {
           from: socket.data.userId
         });
+            
+            console.log(`Player ${socket.data.userId} left game room ${data.roomId}, notified partner ${data.to}`);
+          }
+        }, 200);
       }
-      
-      console.log(`Player ${socket.data.userId} left game room: ${data.roomId}`);
     } catch (error) {
       console.error('Error in game-leave-room:', error);
     }
   });
   
-  // Game move
+  /**
+   * Handle game move
+   */
   socket.on('game-move', (data: GameMove) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      // التحقق من صحة البيانات باستخدام المخطط المناسب حسب نوع اللعبة
+      let validationResult;
+      
+      switch (data.gameType) {
+        case 'tic-tac-toe':
+          validationResult = validate(ticTacToeMoveSchema, data);
+          break;
+        case 'rock-paper-scissors':
+          validationResult = validate(rockPaperScissorsMoveSchema, data);
+          break;
+        case 'word-galaxy':
+          validationResult = validate(wordGalaxyMoveSchema, data);
+          break;
+        default:
+          // استخدام معالج الأخطاء الجديد
+          errorHandler.sendErrorToUser(
+            socket.data.userId, 
+            socket.id, 
+            errorHandler.createError(
+              ErrorType.VALIDATION,
+              'GAME_TYPE_UNSUPPORTED',
+              `Unsupported game type: ${data.gameType}`,
+              { gameType: data.gameType }
+            )
+          );
+          return;
+      }
+      
+      if (!validationResult.success) {
+        // استخدام معالج الأخطاء الجديد
+        errorHandler.sendErrorToUser(
+          socket.data.userId, 
+          socket.id, 
+          errorHandler.createError(
+            ErrorType.VALIDATION,
+            'INVALID_MOVE_DATA',
+            `Invalid move data: ${validationResult.error}`,
+            { gameType: data.gameType, error: validationResult.error }
+          )
+        );
+        return;
+      }
+      
+      // استخدام البيانات المتحقق منها
+      const validData = validationResult.data;
+      
+      const targetUserInfo = userService.getUserInfo(validData.to);
       
       if (!targetUserInfo) {
+        // استخدام معالج الأخطاء الجديد
+        errorHandler.sendErrorToUser(
+          socket.data.userId, 
+          socket.id, 
+          errorHandler.createError(
+            ErrorType.CONNECTION,
+            'PARTNER_NOT_FOUND',
+            "Could not find your partner. They may have disconnected.",
+            { targetId: validData.to }
+          )
+        );
+        return;
+      }
+      
+      // Process move on the server side
+      if (validData.roomId) {
+        const result = gameController.processMove(validData.roomId, socket.data.userId, validData.move);
+        if (!result) {
+          // استخدام معالج الأخطاء الجديد
+          errorHandler.sendErrorToUser(
+            socket.data.userId, 
+            socket.id, 
+            errorHandler.createError(
+              ErrorType.GAME_LOGIC,
+              'INVALID_MOVE',
+              "Invalid move or game not found.",
+              { 
+                roomId: validData.roomId, 
+                gameType: validData.gameType,
+                move: validData.move
+              }
+            )
+          );
+          return;
+        }
+        
+        // تسجيل الحركة للمساعدة في تتبع الأخطاء
+        console.log(`Game move in room ${validData.roomId}: player ${socket.data.userId}, move:`, validData.move);
+      }
+      
+      // Forward move to partner
+      io.to(targetUserInfo.socketId).emit('game-move', {
+        gameType: validData.gameType,
+        move: validData.move,
+        from: socket.data.userId
+      });
+    } catch (error) {
+      console.error('Error in game-move:', error);
+      
+      // استخدام معالج الأخطاء الجديد
+      errorHandler.sendErrorToUser(
+        socket.data.userId, 
+        socket.id, 
+        errorHandler.createError(
+          ErrorType.SERVER,
+          'MOVE_PROCESSING_ERROR',
+          "Failed to process game move due to server error.",
+          { error: (error as Error).message }
+        )
+      );
+    }
+  });
+  
+  /**
+   * Handle game reset
+   */
+  socket.on('game-reset', (data: GameReset) => {
+    try {
+      // التحقق من صحة البيانات باستخدام مخطط Zod
+      const validationResult = validate(gameResetSchema, data);
+      
+      if (!validationResult.success) {
         socket.emit('game-error', {
-          message: "Cannot find your game partner. They may have disconnected.",
+          message: `Invalid data: ${validationResult.error}`,
           from: 'system',
           gameType: data.gameType
         });
         return;
       }
       
-      // Forward move to partner
-      io.to(targetUserInfo.socketId).emit('game-move', {
-        gameType: data.gameType,
-        move: data.move,
-        from: socket.data.userId
-      });
+      // استخدام البيانات المتحقق منها
+      const validData = validationResult.data;
       
-      console.log(`Game move: ${socket.data.userId} made a move in ${data.gameType} game with ${data.to}`);
+      const targetUserInfo = userService.getUserInfo(validData.to);
+      
+      if (!targetUserInfo) {
+        socket.emit('game-error', {
+          message: "Could not find your partner. They may have disconnected.",
+          from: 'system',
+          gameType: validData.gameType
+        });
+        return;
+      }
+      
+      // Process reset on the server side
+      if (validData.roomId) {
+        const success = gameController.resetGame(validData.roomId, socket.data.userId);
+        if (!success) {
+          socket.emit('game-error', {
+            message: "Failed to reset the game.",
+            from: 'system',
+            gameType: validData.gameType
+          });
+          return;
+        }
+        
+        // تسجيل إعادة ضبط اللعبة
+        console.log(`Game reset in room ${validData.roomId} by player ${socket.data.userId}`);
+      }
+      
+      // Forward reset to partner
+      io.to(targetUserInfo.socketId).emit('game-reset', {
+        gameType: validData.gameType,
+        from: socket.data.userId,
+        swapRoles: validData.swapRoles,
+        shouldBeCreator: validData.shouldBeCreator,
+        roundCount: validData.roundCount,
+        guesserScore: validData.guesserScore,
+        creatorScore: validData.creatorScore
+      });
     } catch (error) {
-      console.error('Error in game-move:', error);
+      console.error('Error in game-reset:', error);
       socket.emit('game-error', {
-        message: "Failed to send your move due to a server error.",
+        message: "Failed to reset the game due to server error.",
         from: 'system',
         gameType: data.gameType
       });
     }
   });
   
-  // Start a new round (for Rock Paper Scissors)
+  /**
+   * Handle start round
+   */
   socket.on('game-start-round', (data: GameStartRound) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your game partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system',
           gameType: data.gameType
         });
         return;
       }
       
-      // Forward round start to partner
+      // Forward start round to partner
       io.to(targetUserInfo.socketId).emit('game-start-round', {
         gameType: data.gameType,
         round: data.round,
         from: socket.data.userId
       });
-      
-      console.log(`Game round started: ${socket.data.userId} started round ${data.round} in ${data.gameType} with ${data.to}`);
     } catch (error) {
       console.error('Error in game-start-round:', error);
       socket.emit('game-error', {
-        message: "Failed to start new round due to a server error.",
+        message: "Failed to start game round due to server error.",
         from: 'system',
         gameType: data.gameType
       });
     }
   });
   
-  // Word setup (for Word Galaxy)
+  /**
+   * Handle word setup for word galaxy
+   */
   socket.on('game-word-setup', (data: GameWordSetup) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your game partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system',
           gameType: data.gameType
         });
@@ -357,26 +589,26 @@ export const setupGameEvents = (io: Server, socket: Socket, activeUsers: Map<str
         difficulty: data.difficulty,
         from: socket.data.userId
       });
-      
-      console.log(`Word setup: ${socket.data.userId} created a word of length ${data.wordLength} for ${data.to}`);
     } catch (error) {
       console.error('Error in game-word-setup:', error);
       socket.emit('game-error', {
-        message: "Failed to setup the word due to a server error.",
+        message: "Failed to set up game due to server error.",
         from: 'system',
         gameType: data.gameType
       });
     }
   });
   
-  // Guess result (for Word Galaxy)
+  /**
+   * Handle guess result for word galaxy
+   */
   socket.on('game-guess-result', (data: GameGuessResult) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
       
       if (!targetUserInfo) {
         socket.emit('game-error', {
-          message: "Cannot find your game partner. They may have disconnected.",
+          message: "Could not find your partner. They may have disconnected.",
           from: 'system',
           gameType: data.gameType
         });
@@ -389,140 +621,280 @@ export const setupGameEvents = (io: Server, socket: Socket, activeUsers: Map<str
         result: data.result,
         from: socket.data.userId
       });
-      
-      console.log(`Guess result: ${socket.data.userId} processed guess "${data.result.word}" for ${data.to}`);
     } catch (error) {
       console.error('Error in game-guess-result:', error);
       socket.emit('game-error', {
-        message: "Failed to process guess due to a server error.",
+        message: "Failed to send guess result due to server error.",
         from: 'system',
         gameType: data.gameType
       });
     }
   });
   
-  // Game reset
-  socket.on('game-reset', (data: GameReset) => {
+  /**
+   * Handle score updates (for games tracking scores)
+   */
+  socket.on('game-score-update', (data: { gameType: string, to: string, [key: string]: any }) => {
     try {
-      const targetUserInfo = activeUsers.get(data.to);
+      const targetUserInfo = userService.getUserInfo(data.to);
+      if (targetUserInfo) {
+        io.to(targetUserInfo.socketId).emit('game-score-update', {
+          ...data,
+          from: socket.data.userId
+        });
+      }
+    } catch (error) {
+      console.error('Error in game-score-update:', error);
+    }
+  });
+  
+  /**
+   * Handle cleanup when a user disconnects
+   */
+  socket.on('disconnecting', () => {
+    try {
+      // Get all active rooms
+      const allRooms = gameController.getAllActiveRooms();
       
-      if (!targetUserInfo) {
+      // Clean up all rooms the user is in
+      for (const [roomId, game] of allRooms.entries()) {
+        const gameState = game.getState();
+        
+        if (gameState.players.includes(socket.data.userId)) {
+          // Notify the partner
+          const partnerId = gameState.players.find((id: string) => id !== socket.data.userId);
+          if (partnerId) {
+            const partnerInfo = userService.getUserInfo(partnerId);
+            if (partnerInfo) {
+              io.to(partnerInfo.socketId).emit('game-partner-disconnected', {
+        from: socket.data.userId,
+                gameType: game.gameType
+      });
+            }
+          }
+      
+          // Remove player from room
+          gameController.leaveGameRoom(roomId, socket.data.userId);
+        }
+      }
+    } catch (error) {
+      console.error('Error in game disconnect handling:', error);
+    }
+  });
+  
+  /**
+   * Handle reconnection to a game
+   */
+  socket.on('game-reconnect', (data: { roomId: string }) => {
+    try {
+      // التحقق من وجود معرف الغرفة
+      if (!data.roomId) {
         socket.emit('game-error', {
-          message: "Cannot find your game partner. They may have disconnected.",
-          from: 'system',
-          gameType: data.gameType
+          message: "Room ID is required for reconnection.",
+          from: 'system'
         });
         return;
       }
       
-      io.to(targetUserInfo.socketId).emit('game-reset', {
-        gameType: data.gameType,
-        from: socket.data.userId,
-        swapRoles: data.swapRoles,
-        shouldBeCreator: data.shouldBeCreator,
-        roundCount: data.roundCount,
-        guesserScore: data.guesserScore,
-        creatorScore: data.creatorScore
-      });
+      // استخدام آلية إعادة الاتصال في وحدة التحكم باللعبة
+      const gameState = gameController.handleReconnection(data.roomId, socket.data.userId, socket.id);
       
-      console.log(`Game reset: ${socket.data.userId} reset game with ${data.to}, Partner should be ${data.shouldBeCreator ? 'creator' : 'guesser'}`);
-    } catch (error) {
-      console.error('Error in game-reset:', error);
-      socket.emit('game-error', {
-        message: "Failed to reset the game due to a server error.",
-        from: 'system',
-        gameType: data.gameType
-      });
-    }
-  });
-  
-  // Game error
-  socket.on('game-error', (data: GameError) => {
-    try {
-      const targetUserInfo = activeUsers.get(data.to);
-      
-      if (!targetUserInfo) {
-        // User might have disconnected, no need to forward the error
+      if (!gameState) {
+        socket.emit('game-error', {
+          message: "Failed to reconnect to the game. The session may have expired.",
+          from: 'system'
+        });
         return;
       }
       
-      io.to(targetUserInfo.socketId).emit('game-error', {
-        message: data.message,
-        from: socket.data.userId,
-        gameType: data.gameType
+      // إعادة الاتصال ناجحة، إرسال حالة اللعبة الحالية للمستخدم
+      socket.emit('game-reconnect-success', {
+        roomId: data.roomId,
+        state: gameState
       });
       
-      console.log(`Game error: ${socket.data.userId} sent error to ${data.to}: ${data.message}`);
-    } catch (error) {
-      console.error('Error in game-error:', error);
-    }
-  });
-  
-  // Game leave notification (simple notification without leaving room)
-  socket.on('game-leave-notification', (data: { gameType: string; to: string; message: string }) => {
-    try {
-      const targetUserInfo = activeUsers.get(data.to);
+      // إعلام اللاعبين الآخرين بإعادة اتصال هذا اللاعب
+      const otherPlayers = gameState.players.filter((id: string) => id !== socket.data.userId);
       
-      if (!targetUserInfo) {
-        // User might have disconnected, no need to forward the notification
-        return;
-      }
-      
-      // Send a notification to the partner that doesn't trigger a game-end event
-      io.to(targetUserInfo.socketId).emit('game-notification', {
-        type: 'info',
-        message: data.message || 'Your partner left the game but is still in the chat.',
-        from: socket.data.userId,
-        gameType: data.gameType
-      });
-      
-      console.log(`Game notification: ${socket.data.userId} sent notification to ${data.to}: ${data.message}`);
-    } catch (error) {
-      console.error('Error in game-leave-notification:', error);
-    }
-  });
-  
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    // Leave all game rooms this user is in
-    for (const [roomId, room] of gameRooms.entries()) {
-      const playerIndex = room.players.indexOf(socket.data.userId);
-      
-      if (playerIndex !== -1) {
-        // Remove player from room
-        room.players.splice(playerIndex, 1);
-        
-        // If room is empty, delete it
-        if (room.players.length === 0) {
-          gameRooms.delete(roomId);
-          console.log(`Game room deleted on disconnect: ${roomId}`);
-        } else {
-          // Notify other players in the room
-          room.players.forEach(playerId => {
-            const playerInfo = activeUsers.get(playerId);
-            if (playerInfo) {
-              io.to(playerInfo.socketId).emit('game-partner-left', {
-                from: socket.data.userId
-              });
-            }
+      for (const playerId of otherPlayers) {
+        const playerInfo = userService.getUserInfo(playerId);
+        if (playerInfo) {
+          io.to(playerInfo.socketId).emit('game-player-reconnected', {
+            roomId: data.roomId,
+            playerId: socket.data.userId
           });
         }
       }
+      
+      console.log(`Player ${socket.data.userId} reconnected to game room ${data.roomId}`);
+    } catch (error) {
+      console.error('Error in game-reconnect:', error);
+      socket.emit('game-error', {
+        message: "Failed to reconnect due to server error.",
+        from: 'system'
+      });
     }
-    
-    console.log(`User ${socket.data.userId} disconnected from games`);
   });
   
-  // Clean up old game rooms periodically (every 30 minutes)
-  setInterval(() => {
-    const now = Date.now();
-    const ONE_HOUR = 60 * 60 * 1000;
+  /**
+   * Handle game disconnection
+   * هذا المعالج يحتفظ بحالة اللعبة عندما ينقطع اتصال اللاعب مؤقتًا
+   */
+  socket.on('game-disconnect', (data: { roomId: string, temporary?: boolean }) => {
+    try {
+      const userId = socket.data.userId;
+      if (!userId || !data.roomId) return;
+      
+      const game = gameController.getGameByRoom(data.roomId);
+      if (!game) return;
+      
+      const players = game.getState().players;
+      
+      // التحقق مما إذا كان المستخدم في هذه اللعبة
+      if (players.includes(userId)) {
+        // إذا كان الانقطاع مؤقتًا، نسجله فقط
+        if (data.temporary) {
+          console.log(`Player ${userId} temporarily disconnected from game room ${data.roomId}`);
+          
+          // إبلاغ اللاعب الآخر بانقطاع الاتصال المؤقت
+          const otherPlayer = players.find((id: string) => id !== userId);
+          if (otherPlayer) {
+            const otherPlayerInfo = userService.getUserInfo(otherPlayer);
+            if (otherPlayerInfo) {
+              io.to(otherPlayerInfo.socketId).emit('game-partner-disconnected', {
+                roomId: data.roomId,
+                playerId: userId,
+                temporary: true
+              });
+            }
+          }
+        } else {
+          // الانقطاع الدائم، مغادرة اللعبة
+          console.log(`Player ${userId} permanently left game room ${data.roomId}`);
+          
+          // إبلاغ اللاعب الآخر بمغادرة اللاعب
+          const otherPlayer = players.find((id: string) => id !== userId);
+          if (otherPlayer) {
+            const otherPlayerInfo = userService.getUserInfo(otherPlayer);
+            if (otherPlayerInfo) {
+              io.to(otherPlayerInfo.socketId).emit('game-partner-left', {
+                roomId: data.roomId,
+                playerId: userId,
+                from: userId
+              });
+            }
+          }
+          
+          // معالجة مغادرة اللاعب للعبة
+          gameController.leaveGameRoom(data.roomId, userId);
+        }
+      }
+    } catch (error) {
+      console.error('Error in game-disconnect:', error);
+    }
+  });
+  
+  /**
+   * أيضًا مراقبة حدث disconnect العام لتسجيل انقطاع الاتصال للألعاب
+   */
+  socket.on('disconnect', () => {
+    const userId = socket.data.userId;
+    if (!userId) return;
     
-    for (const [roomId, room] of gameRooms.entries()) {
-      if (now - room.createdAt > ONE_HOUR) {
-        gameRooms.delete(roomId);
-        console.log(`Cleaned up old game room: ${roomId}`);
+    const rooms = gameController.getAllActiveRooms();
+    
+    for (const [roomId, game] of rooms.entries()) {
+      const players = game.getState().players;
+      
+      // التحقق مما إذا كان المستخدم في هذه اللعبة
+      if (players.includes(userId)) {
+        // تسجيل انقطاع الاتصال
+        console.log(`Player ${userId} disconnected from game room ${roomId}`);
+        
+        // إبلاغ اللاعب الآخر بانقطاع الاتصال المؤقت
+        const otherPlayer = players.find((id: string) => id !== userId);
+        if (otherPlayer) {
+          const otherPlayerInfo = userService.getUserInfo(otherPlayer);
+          if (otherPlayerInfo) {
+            io.to(otherPlayerInfo.socketId).emit('game-partner-disconnected', {
+              roomId,
+              playerId: userId,
+              temporary: true // علامة تشير إلى أن هذا انقطاع مؤقت وقد يعود اللاعب
+            });
+          }
+        }
+        
+        // تسجيل الانقطاع في خدمة حالة اللعبة لإمكانية إعادة الاتصال
+        gameService.recordDisconnection(userId);
       }
     }
-  }, 30 * 60 * 1000);
+  });
+  
+  /**
+   * Handle game notifications between players
+   */
+  socket.on('game-notification', (data: { gameType: string, to: string, message: string, type?: string }) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.to);
+      
+      if (!targetUserInfo) {
+        console.log(`Cannot send game notification: target user ${data.to} not found`);
+        return;
+      }
+      
+      // Forward notification to target user
+      io.to(targetUserInfo.socketId).emit('game-notification', {
+        gameType: data.gameType,
+        message: data.message,
+        type: data.type || 'info',
+        from: socket.data.userId
+      });
+      
+      console.log(`Game notification sent from ${socket.data.userId} to ${data.to}: ${data.message}`);
+    } catch (error) {
+      console.error('Error in game-notification:', error);
+    }
+  });
+
+  /**
+   * Handle game ping (connection check)
+   */
+  socket.on('game-ping', (data: { to: string, gameType: string }) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.to);
+      
+      // إذا كان المستخدم المستهدف متصلاً، أرسل له الـ ping
+      if (targetUserInfo) {
+        io.to(targetUserInfo.socketId).emit('game-ping', {
+          from: socket.data.userId,
+          gameType: data.gameType
+        });
+        
+        console.log(`Game ping sent from ${socket.data.userId} to ${data.to}`);
+      }
+    } catch (error) {
+      console.error('Error in game-ping:', error);
+    }
+  });
+
+  /**
+   * Handle game pong (connection check response)
+   */
+  socket.on('game-pong', (data: { to: string, gameType: string }) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.to);
+      
+      // إذا كان المستخدم المستهدف متصلاً، أرسل له الـ pong
+      if (targetUserInfo) {
+        io.to(targetUserInfo.socketId).emit('game-pong', {
+          from: socket.data.userId,
+          gameType: data.gameType
+        });
+        
+        console.log(`Game pong sent from ${socket.data.userId} to ${data.to}`);
+      }
+    } catch (error) {
+      console.error('Error in game-pong:', error);
+    }
+  });
 };

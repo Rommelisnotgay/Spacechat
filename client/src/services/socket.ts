@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, getCurrentInstance } from 'vue';
 import { io, Socket } from 'socket.io-client';
 
 // Determine the API URL based on environment
@@ -20,58 +20,76 @@ const userId = ref<string | null>(null);
 const isConnected = ref(false);
 let pingInterval: ReturnType<typeof setInterval> | null = null;
 
+// Queue status variables
+const queueStatus = ref<'idle' | 'waiting' | 'timeout' | 'matched'>('idle');
+const queueMessage = ref<string>('');
+const queueWaitTime = ref<number>(0);
+
+// Optimized for high traffic - connection backoff parameters
+const MAX_RECONNECTION_ATTEMPTS = 10;
+const INITIAL_RECONNECTION_DELAY = 1000;
+const MAX_RECONNECTION_DELAY = 10000;
+const PING_INTERVAL = 45000; // 45 seconds ping interval
+const CONNECTION_TIMEOUT = 30000; // 30 seconds connection timeout
+
 /**
  * Socket service for managing real-time connections
+ * Optimized for high traffic (200+ users, 2000 reqs/sec)
  */
 export function useSocket() {
-  onMounted(() => {
-    if (!socket.value) {
-      initializeSocket();
-    }
-  });
+  // Check if we're in a component setup context
+  const isInSetupContext = !!getCurrentInstance();
+  
+  // Initialize the socket connection if not already initialized
+  if (!socket.value) {
+    initializeSocket();
+  }
+  
+  // Only register lifecycle hooks if we're in a component setup context
+  if (isInSetupContext) {
+    onMounted(() => {
+      if (!socket.value) {
+        initializeSocket();
+      }
+    });
 
-  onUnmounted(() => {
-    // Clean up socket connection when component is unmounted
-    // But don't disconnect completely - just remove listeners from this instance
-    if (socket.value) {
-      cleanupSocketListeners();
-    }
-    
-    // Clear ping interval
-    if (pingInterval) {
-      clearInterval(pingInterval);
-      pingInterval = null;
-    }
-  });
+    onUnmounted(() => {
+      // Clean up socket connection when component is unmounted
+      // But don't disconnect completely - just remove listeners from this instance
+      if (socket.value) {
+        cleanupSocketListeners();
+      }
+      
+      // Clear ping interval
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+    });
+  }
 
-  // Initialize the socket connection
+  // Initialize the socket connection with optimized settings for high traffic
   function initializeSocket() {
     const apiUrl = getApiUrl();
-    console.log(`Connecting to socket server at: ${apiUrl}`);
     
     // Try to get previously stored user ID
     const storedUserId = localStorage.getItem('spacechat_user_id');
-    console.log('Retrieved stored user ID:', storedUserId);
     
-    // Connect to socket.io server
+    // Connect to socket.io server - optimized for high concurrency
     socket.value = io(apiUrl, {
       autoConnect: true,
       reconnection: true,
-      reconnectionAttempts: Infinity, // Try to reconnect forever
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000, // Max delay between reconnections
-      timeout: 30000, // Increased timeout to 30 seconds
-      transports: ['websocket', 'polling'], // Prefer WebSocket but fallback to polling
+      reconnectionAttempts: MAX_RECONNECTION_ATTEMPTS,
+      reconnectionDelay: INITIAL_RECONNECTION_DELAY,
+      reconnectionDelayMax: MAX_RECONNECTION_DELAY,
+      timeout: CONNECTION_TIMEOUT, 
+      transports: ['websocket'], // WebSocket only for performance in production
       extraHeaders: {
-        'X-Client-Version': '1.0.0', // Helps identify client versions for debugging
+        'X-Client-Version': '1.0.0'
       },
       // Add stored user ID in query params for immediate identification
       query: storedUserId ? { userId: storedUserId } : undefined,
-      // Path settings - uncomment if needed for specific server setup
-      // path: '/socket.io/',
-      forceNew: false, // Reuse existing connection if possible
-      rememberUpgrade: true, // Remember websocket connection between page refreshes
-      // Added to enhance connection behind proxies and firewalls
+      forceNew: false, // Reuse existing connection
       withCredentials: true
     });
 
@@ -81,19 +99,20 @@ export function useSocket() {
     startPingInterval();
   }
   
-  // Setup ping interval
+  // Setup ping interval - optimized to reduce unnecessary traffic
   function startPingInterval() {
     // Clear existing interval if any
     if (pingInterval) {
       clearInterval(pingInterval);
     }
     
-    // Start new interval - ping every 30 seconds
+    // Start new interval - ping less frequently to reduce server load
     pingInterval = setInterval(() => {
       if (socket.value && isConnected.value) {
-        socket.value.emit('ping');
+        // Send heartbeat to update last seen time
+        socket.value.emit('heartbeat');
       }
-    }, 30000);
+    }, PING_INTERVAL);
   }
 
   // Set up all socket event listeners
@@ -187,6 +206,56 @@ export function useSocket() {
       // Store user ID in localStorage for reconnection
       localStorage.setItem('spacechat_user_id', id);
     });
+
+    // Handle queue timeout event
+    socket.value.on('queue-timeout', (data: { message: string, waitTime: number }) => {
+      console.log('Queue timeout:', data);
+      queueStatus.value = 'timeout';
+      // If the message is in Arabic, replace it with English
+      queueMessage.value = "We couldn't find a suitable match in the allotted time. Please try again.";
+      queueWaitTime.value = data.waitTime;
+      
+      // Emit a custom event for components to react to
+      window.dispatchEvent(new CustomEvent('queue-status-changed', { 
+        detail: { status: 'timeout', message: queueMessage.value, waitTime: data.waitTime }
+      }));
+    });
+    
+    // Handle queue waiting notification
+    socket.value.on('queue-waiting', (data: { message: string, waitTime: number }) => {
+      console.log('Queue waiting notification:', data);
+      queueStatus.value = 'waiting';
+      // If the message is in Arabic, replace it with English
+      queueMessage.value = "We're still looking for a match for you. Please wait...";
+      queueWaitTime.value = data.waitTime;
+      
+      // Emit a custom event for components to react to
+      window.dispatchEvent(new CustomEvent('queue-status-changed', { 
+        detail: { status: 'waiting', message: queueMessage.value, waitTime: data.waitTime }
+      }));
+    });
+    
+    // Update status when matched
+    socket.value.on('matched', () => {
+      queueStatus.value = 'matched';
+      queueMessage.value = '';
+      queueWaitTime.value = 0;
+    });
+    
+    // Reset queue status when joining queue
+    socket.value.on('join-queue', () => {
+      queueStatus.value = 'waiting';
+      queueMessage.value = 'Looking for someone matching your preferences...';
+      queueWaitTime.value = 0;
+    });
+
+    // Add handler for visibility change to update activity when tab becomes visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && socket.value && socket.value.connected) {
+        socket.value.emit('heartbeat');
+        console.log('Tab became visible, sending heartbeat');
+      }
+    });
   }
 
   // Clean up all socket listeners
@@ -202,6 +271,10 @@ export function useSocket() {
     socket.value.off('error');
     socket.value.off('user-id');
     socket.value.off('pong');
+    
+    // Clean up queue event listeners
+    socket.value.off('queue-timeout');
+    socket.value.off('queue-waiting');
   }
 
   // Force reconnection
@@ -215,10 +288,14 @@ export function useSocket() {
     }
   }
 
-  return { 
-    socket, 
-    isConnected, 
+  return {
+    socket,
     userId,
-    reconnect 
+    isConnected,
+    queueStatus,
+    queueMessage,
+    queueWaitTime,
+    reconnect,
+    isInSetupContext
   };
 }

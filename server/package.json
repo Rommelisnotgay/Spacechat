@@ -7,7 +7,8 @@
     "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start:prod": "NODE_ENV=production node --max-old-space-size=4096 --expose-gc dist/index.js",
+    "start:cluster": "NODE_ENV=production node --max-old-space-size=4096 --expose-gc dist/cluster.js"
   },
   "keywords": [
     "webrtc",
@@ -18,12 +19,17 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@socket.io/cluster-adapter": "^0.2.2",
+    "@socket.io/redis-adapter": "^8.2.1",
     "axios": "^1.9.0",
     "bad-words": "^3.0.4",
     "cors": "^2.8.5",
     "express": "^4.18.2",
+    "redis": "^4.7.1",
     "socket.io": "^4.7.2",
-    "uuid": "^9.0.1"
+    "socket.io-redis": "^5.4.0",
+    "uuid": "^9.0.1",
+    "zod": "^3.25.62"
   },
   "devDependencies": {
     "@types/bad-words": "^3.0.3",

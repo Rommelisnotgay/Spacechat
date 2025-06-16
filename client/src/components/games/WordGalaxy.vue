@@ -13,22 +13,7 @@
           'bg-blue-600/40 border border-blue-500/30': gameState === 'guessing',
           'bg-purple-600/40 border border-purple-500/30': gameState === 'complete'
         }">
-        <span v-if="gameState === 'waiting'" class="text-yellow-300 animate-pulse flex items-center">
-          <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full mr-2 animate-ping"></span>
-          Waiting...
-        </span>
-        <span v-else-if="gameState === 'setup'" class="flex items-center">
-          <span class="inline-block w-2 h-2 bg-green-400 rounded-full mr-2"></span>
-          Setup
-        </span>
-        <span v-else-if="gameState === 'guessing'" class="flex items-center">
-          <span class="inline-block w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
-          Guessing
-        </span>
-        <span v-else-if="gameState === 'complete'" class="flex items-center">
-          <span class="inline-block w-2 h-2 bg-purple-400 rounded-full mr-2"></span>
-          Complete!
-        </span>
+        {{ gameStateLabel }}
       </div>
     </div>
     
@@ -316,43 +301,6 @@
       </div>
     </div>
     
-    <!-- Game Rules Collapse -->
-    <div class="mb-4">
-      <button 
-        @click="showRules = !showRules" 
-        class="w-full flex justify-between items-center bg-gray-700/50 hover:bg-gray-700 px-4 py-2 rounded-lg text-white text-sm transition-colors"
-      >
-        <span>Game Rules & How to Play</span>
-        <span>{{ showRules ? '▲' : '▼' }}</span>
-      </button>
-      
-      <div v-if="showRules" class="bg-gray-800/60 mt-2 p-4 rounded-lg border border-gray-700 text-sm text-gray-300 animate__animated animate__fadeIn">
-        <h4 class="font-bold text-white mb-2">Word Galaxy Rules:</h4>
-        <ul class="list-disc pl-4 space-y-2 mb-4">
-          <li>One player creates a secret word (3-15 letters)</li>
-          <li>The other player tries to guess the word</li>
-          <li>The guesser can see a blurred version of the word that gradually reveals itself with correct guesses</li>
-          <li>Each guess reveals letters that are in the correct position</li>
-          <li>The guesser has a limited number of attempts and time based on difficulty:
-            <ul class="list-disc pl-4 mt-1">
-              <li><span class="text-green-400">Easy:</span> 10 attempts, 60 seconds</li>
-              <li><span class="text-yellow-400">Medium:</span> 8 attempts, 45 seconds</li>
-              <li><span class="text-red-400">Hard:</span> 6 attempts, 30 seconds</li>
-            </ul>
-          </li>
-          <li>The word creator can give hints verbally through voice chat</li>
-          <li>If the guesser solves the word, they win. If they run out of time or attempts, the word creator wins</li>
-        </ul>
-        
-        <h4 class="font-bold text-white mb-2">Tips:</h4>
-        <ul class="list-disc pl-4 space-y-1">
-          <li><span class="text-blue-400">For the Guesser:</span> Pay attention to revealed letters</li>
-          <li><span class="text-purple-400">For the Word Creator:</span> Give helpful but not too obvious hints through voice</li>
-          <li>Work together to have fun!</li>
-        </ul>
-      </div>
-    </div>
-    
     <!-- Game Controls -->
     <div class="flex justify-between">
       <button 
@@ -363,11 +311,36 @@
       </button>
     </div>
   </div>
+  
+  <!-- Confirmation Dialog -->
+  <div v-if="showConfirmation" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+    <div class="bg-gray-800 p-4 rounded-lg max-w-xs w-full text-center">
+      <h3 class="text-lg font-semibold mb-3 text-white">{{ isArabicWord(secretWord) ? 'هل أنت متأكد؟' : 'Are you sure?' }}</h3>
+      <p class="text-sm text-gray-300 mb-4">
+        {{ isArabicWord(secretWord) ? 'مغادرة اللعبة ستنهيها لشريكك أيضًا.' : 'Leaving the game will end it for your partner too.' }}
+      </p>
+      <div class="flex justify-center gap-3">
+        <button 
+          @click="showConfirmation = false" 
+          class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+        >
+          {{ isArabicWord(secretWord) ? 'إلغاء' : 'Cancel' }}
+        </button>
+        <button 
+          @click="confirmExit" 
+          class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm"
+        >
+          {{ isArabicWord(secretWord) ? 'مغادرة' : 'Leave' }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useSocket } from '@/services/socket';
+import { gameSoundEffects, GameVisualEffects } from './GameEffects';
 
 const props = defineProps({
   partnerId: {
@@ -385,9 +358,9 @@ const emit = defineEmits(['back', 'error']);
 const { socket, userId } = useSocket();
 
 // UI state
-const showRules = ref(false);
 const wordError = ref('');
 const guessError = ref('');
+const showConfirmation = ref(false);
 
 // Game state
 const gameState = ref<'waiting' | 'setup' | 'guessing' | 'complete'>('waiting');
@@ -422,6 +395,9 @@ const difficultySettings = {
   medium: { attempts: 8, time: 45, multiplier: 1.5 },
   hard: { attempts: 6, time: 30, multiplier: 2 }
 };
+
+// Sound state
+const isSoundMuted = ref(gameSoundEffects.isSoundMuted());
 
 // Helper function to detect if text contains Arabic
 const isArabicWord = (text: string): boolean => {
@@ -508,6 +484,9 @@ const startGame = () => {
   // Convert word to lowercase and trim spaces
   secretWord.value = secretWord.value.trim();
   
+  // Play game start sound
+  gameSoundEffects.playSound('gameStart');
+  
   // Send the word and settings to partner
   socket.value?.emit('game-word-setup', {
     gameType: 'word-galaxy',
@@ -552,9 +531,7 @@ const startTimer = () => {
         // Notify partner
         socket.value?.emit('game-move', {
           gameType: 'word-galaxy',
-          move: {
-            type: 'timeout'
-          },
+          move: "timeout",
           to: props.partnerId
         });
       }
@@ -585,13 +562,13 @@ const submitGuess = () => {
   const guess = currentGuess.value.trim();
   guessError.value = '';
   
+  // Play move sound
+  gameSoundEffects.playSound('move');
+  
   // Send guess to partner
   socket.value?.emit('game-move', {
     gameType: 'word-galaxy',
-    move: {
-      type: 'guess',
-      word: guess
-    },
+    move: guess,
     to: props.partnerId
   });
   
@@ -607,12 +584,13 @@ const submitGuess = () => {
     isWinner.value = false;
     stopTimer();
     
+    // Play lose sound
+    gameSoundEffects.playSound('lose');
+    
     // Notify partner
     socket.value?.emit('game-move', {
       gameType: 'word-galaxy',
-      move: {
-        type: 'out-of-attempts'
-      },
+      move: "out-of-attempts",
       to: props.partnerId
     });
   }
@@ -672,6 +650,16 @@ const processGuess = (guess: string) => {
     // Word creator gets 10 points for each wrong guess
     const pointsEarned = 10 * difficultySettings[difficulty.value].multiplier;
     creatorScore.value += Math.round(pointsEarned);
+    
+    // Play sound based on matches
+    if (matches > 0) {
+      gameSoundEffects.playSound('correct');
+    } else {
+      gameSoundEffects.playSound('incorrect');
+    }
+  } else {
+    // Play win sound for correct guess
+    gameSoundEffects.playSound('win');
   }
   
   // Send result back to guesser - send the actual secret word for revealed positions
@@ -745,8 +733,17 @@ const handleGuessResult = (result: {
     secretWord.value = result.word;
     stopTimer();
     
+    // Play win sound
+    gameSoundEffects.playSound('win');
+    
     // Calculate score
     calculateScore();
+  } else if (result.matches > 0) {
+    // Play correct sound for partial matches
+    gameSoundEffects.playSound('correct');
+  } else {
+    // Play incorrect sound for no matches
+    gameSoundEffects.playSound('incorrect');
   }
 };
 
@@ -855,16 +852,28 @@ const playAgain = () => {
 
 // Handle leaving the game
 const leaveGame = () => {
-  // Send a simple notification to partner that we're leaving the game menu
-  // but we don't want to use game-leave-room which triggers the partner left event
-  socket.value?.emit('game-leave-notification', {
+  showConfirmation.value = true;
+  
+  // Play button sound
+  gameSoundEffects.playSound('button');
+};
+
+const confirmExit = () => {
+  showConfirmation.value = false;
+  
+  // Send a notification to partner that we're leaving the game
+  socket.value?.emit('game-leave', {
     gameType: 'word-galaxy',
-    to: props.partnerId,
-    message: 'User left the game but still in the chat'
+    to: props.partnerId
   });
   
   // Return to game selection
   emit('back');
+};
+
+// Toggle sound mute/unmute
+const toggleSound = () => {
+  isSoundMuted.value = gameSoundEffects.toggleMute();
 };
 
 // Handle socket events
@@ -887,6 +896,9 @@ onMounted(() => {
       
       console.log(`Role assignment: My ID ${myId}, Partner ID ${partnerId}, I am ${isWordCreator.value ? 'word creator' : 'guesser'}`);
     }
+    
+    // Play game start sound
+    gameSoundEffects.playSound('gameStart');
   }
   
   // Word setup
@@ -924,25 +936,28 @@ onMounted(() => {
     if (data.from === props.partnerId && data.gameType === 'word-galaxy') {
       const move = data.move;
       
-      if (move.type === 'guess') {
-        // Process the guess (word creator)
-        processGuess(move.word);
-      } else if (move.type === 'timeout') {
-        // Partner ran out of time (word creator wins)
-        gameState.value = 'complete';
-        isWinner.value = true;
-        partnerStatus.value = 'Ran out of time!';
-        
-        // Award points to creator for winning by timeout
-        calculateScore();
-      } else if (move.type === 'out-of-attempts') {
-        // Partner ran out of attempts (word creator wins)
-        gameState.value = 'complete';
-        isWinner.value = true;
-        partnerStatus.value = 'Ran out of attempts!';
-        
-        // Award points to creator for winning by attempts
-        calculateScore();
+      if (typeof move === 'string') {
+        if (move === 'timeout') {
+          // Partner ran out of time (word creator wins)
+          gameState.value = 'complete';
+          isWinner.value = true;
+          partnerStatus.value = 'Ran out of time!';
+          
+          // Award points to creator for winning by timeout
+          calculateScore();
+        } else if (move === 'out-of-attempts') {
+          // Partner ran out of attempts (word creator wins)
+          gameState.value = 'complete';
+          isWinner.value = true;
+          partnerStatus.value = 'Ran out of attempts!';
+          
+          // Award points to creator for winning by attempts
+          calculateScore();
+        } else {
+          // Es una palabra adivinada
+          // This is a guessed word
+          processGuess(move);
+        }
       }
     }
   });
@@ -976,7 +991,26 @@ onMounted(() => {
   socket.value?.on('game-partner-left', () => {
     gameState.value = 'waiting';
     stopTimer();
-    emit('error', 'Your partner has left the game.');
+    
+    // Play notification sound
+    gameSoundEffects.playSound('notification');
+    
+    // Create a notification banner at the top of the page
+    const partnerLeftMessage = document.createElement('div');
+    partnerLeftMessage.className = 'fixed top-4 right-4 bg-yellow-600/80 text-white px-4 py-2 rounded-lg shadow-lg z-50';
+    partnerLeftMessage.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span>⚠️</span>
+        <span>Your partner has left the game</span>
+      </div>
+    `;
+    document.body.appendChild(partnerLeftMessage);
+    
+    // Remove the notification after 3 seconds and return to games menu
+    setTimeout(() => {
+      document.body.removeChild(partnerLeftMessage);
+      emit('back');
+    }, 3000);
   });
   
   // Handle game reset
@@ -1037,6 +1071,9 @@ onMounted(() => {
 // Clean up socket listeners and timers
 onUnmounted(() => {
   stopTimer();
+  
+  // Stop all game sounds
+  gameSoundEffects.stopAllSounds();
   
   socket.value?.off('game-word-setup');
   socket.value?.off('game-move');

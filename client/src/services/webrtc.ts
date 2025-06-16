@@ -1,12 +1,24 @@
 import { ref, onUnmounted, shallowRef, watch, computed } from 'vue';
+import type { Ref } from 'vue';
 import { useSocket } from './socket';
 import { Socket } from 'socket.io-client';
 import { 
   standardRtcConfiguration, 
   fastRtcConfiguration, 
   turnOnlyRtcConfiguration, 
-  localRtcConfiguration
+  localRtcConfiguration,
+  getOptimalRtcConfiguration
 } from './rtc-configurations';
+import { useMicrophoneState } from './storage';
+
+// إضافة تعريف للمتغيرات العالمية المستخدمة لتخزين ترشيحات ICE
+declare global {
+  interface Window {
+    __localIceCandidates?: RTCIceCandidate[];
+    __remoteIceCandidates?: RTCIceCandidate[];
+    __iceCandidatePairs?: any[];
+  }
+}
 
 interface ConnectionPreferences {
   vibe?: string;
@@ -14,9 +26,24 @@ interface ConnectionPreferences {
   preferSameLanguage?: boolean;
 }
 
-// Use standard configuration by default
+// Initialize with standard config, but this will be replaced with server-provided config
 let currentRtcConfig: RTCConfiguration = standardRtcConfiguration;
-const rtcConfiguration = currentRtcConfig;
+
+// Initialize rtcConfiguration as a ref to allow it to be updated dynamically
+const rtcConfiguration = ref<RTCConfiguration>(currentRtcConfig);
+
+// Flag to track if we have loaded dynamic configuration
+let hasDynamicConfig = false;
+
+// Load optimal configuration asynchronously
+getOptimalRtcConfiguration().then(config => {
+  currentRtcConfig = config;
+  rtcConfiguration.value = config;
+  hasDynamicConfig = true;
+  console.log('Loaded optimal WebRTC configuration from server');
+}).catch(err => {
+  console.error('Failed to load optimal configuration, using fallback:', err);
+});
 
 // Singleton instances for WebRTC to ensure persistence across component lifecycles
 let globalPeerConnection: RTCPeerConnection | null = null;
@@ -38,21 +65,102 @@ let peerConnectionStats: any = null;
 let isNegotiating = false; // Prevent offer/answer overlap
 let isRestartingIce = false; // Control ICE restart
 let connectionRetryCount = 0; // Number of connection retry attempts
-const MAX_CONNECTION_RETRIES = 15; // Increased number of attempts from 10 to 15
+const MAX_CONNECTION_RETRIES = 15; // Increased number of attempts
 let pendingCandidates: RTCIceCandidate[] = []; // List of pending ICE candidates
 
 // Adding stability variables
 let heartbeatInterval: number | null = null;
 let trackCheckInterval: number | null = null;
 let connectionMonitorInterval: number | null = null;
-const HEARTBEAT_INTERVAL = 5000; // Increased from 3000 to 5000
-const TRACK_CHECK_INTERVAL = 5000; // Increased from 3000 to 5000
-const CONNECTION_MONITOR_INTERVAL = 8000; // Increased from 5000 to 8000
-const CONNECTION_STABILITY_THRESHOLD = 15000; // Increased from 10000 to 15000 seconds before considering the connection stable
+const HEARTBEAT_INTERVAL = 5000; 
+const TRACK_CHECK_INTERVAL = 5000;
+const CONNECTION_MONITOR_INTERVAL = 8000;
+const CONNECTION_STABILITY_THRESHOLD = 15000; // seconds before considering the connection stable
 
-// Add constants for connection timeouts
-const CONNECTION_TIMEOUT = 15000; // Increased from 8000 to 15000
-const RECONNECT_DELAY = 1000; // Increased from 500 to 1000
+// Add constants for connection timeouts - optimized for faster connections
+const CONNECTION_TIMEOUT = 10000; // 10 seconds for initial connection
+const RECONNECT_DELAY = 800; // 800ms delay for reconnect
+
+// Add an automatic reconnection system with exponential backoff
+let reconnectionTimer: number | null = null;
+let reconnectionAttempts = 0;
+const MAX_RECONNECTION_ATTEMPTS = 10; // زيادة من 5 إلى 10
+const INITIAL_RECONNECTION_DELAY = 1000; // 1 second
+
+// Define interface for the return type of useWebRTC
+interface WebRTCHook {
+  socket: Ref<any>; // Using any to bypass socket.io-client type issues
+  peerConnection: Ref<RTCPeerConnection | null>;
+  remoteStream: Ref<MediaStream | null>;
+  localStream: Ref<MediaStream | null>;
+  connectionState: Ref<string>;
+  isAudioMuted: Ref<boolean>;
+  partnerId: Ref<string | null>;
+  createOffer: (targetPartnerId: string | null) => Promise<any>;
+  handleOffer: (offer: RTCSessionDescriptionInit, targetPartnerId: string) => Promise<void>;
+  handleAnswer: (answer: RTCSessionDescriptionInit) => Promise<void>;
+  handleIceCandidate: (candidate: RTCIceCandidate) => Promise<void>;
+  toggleMicrophone: () => Promise<boolean>;
+  closeConnection: () => void;
+  initializeLocalStream: () => Promise<MediaStream>;
+  cleanup: () => void;
+  diagnosticReport: any;
+  restoreMicrophoneState: () => Promise<void>;
+  initializeConnection: (partnerId?: string | null) => Promise<void>;
+  diagnoseAndFixConnection: () => boolean;
+  startNegotiation: () => void;
+  attemptReconnection: (partnerId: string | null) => void;
+}
+
+// Add function to collect and send diagnostic data to server
+async function sendDiagnosticData(pc: RTCPeerConnection | null, event: string, details: any = {}): Promise<void> {
+  if (!pc) return;
+  
+  try {
+    // Collect basic diagnostics
+    const stats = await pc.getStats();
+    const statsData: any = {};
+    
+    // Convert stats to a simple object
+    stats.forEach(stat => {
+      statsData[stat.id] = {
+        type: stat.type,
+        timestamp: stat.timestamp,
+        ...stat
+      };
+    });
+    
+    // Collect basic data
+    const diagnosticData = {
+      event,
+      timestamp: Date.now(),
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+      iceGatheringState: pc.iceGatheringState,
+      signalingState: pc.signalingState,
+      localCandidates: (window as any).__localIceCandidates?.length || 0,
+      remoteCandidates: (window as any).__remoteIceCandidates?.length || 0,
+      iceCandidatePairsCount: (window as any).__iceCandidatePairs?.length || 0,
+      rtcConfiguration: rtcConfiguration.value,
+      hasDynamicConfig,
+      details,
+      statsData
+    };
+    
+    // Send to server - don't wait for response
+    fetch('/api/webrtc-diagnostics', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(diagnosticData)
+    }).catch(err => {
+      console.error('Failed to send diagnostic data:', err);
+    });
+  } catch (error) {
+    console.error('Error collecting diagnostic data:', error);
+  }
+}
 
 // Get connection statistics
 async function getConnectionStats(): Promise<any> {
@@ -141,7 +249,7 @@ function stopStatsCollection() {
 // Diagnose connection issues
 function diagnoseConnectionIssues(): string {
   if (!globalPeerConnection) {
-    return 'لا يوجد اتصال نظير إلى نظير. جرب تحديث الصفحة أو افحص إعدادات المتصفح.';
+    return 'لا يوجد اتصال. حاول تحديث الصفحة أو التحقق من إعدادات متصفحك.';
   }
   
   // Check for specific issues
@@ -163,85 +271,23 @@ function diagnoseConnectionIssues(): string {
   
   const state = globalPeerConnection.connectionState || globalPeerConnection.iceConnectionState;
   
-  // Check candidate types to diagnose NAT/firewall issues
-  const candidateInfo = {
-    localCandidates: (window as any).__localIceCandidates?.length || 0,
-    remoteCandidates: (window as any).__remoteIceCandidates?.length || 0,
-    hasLocalRelay: false,
-    hasRemoteRelay: false,
-    hasLocalServerReflexive: false,
-    hasRemoteServerReflexive: false
-  };
-  
-  // Check if we have TURN candidates (relay) which are critical for NAT traversal
-  if ((window as any).__localIceCandidates) {
-    for (const candidate of (window as any).__localIceCandidates) {
-      if (candidate.candidate.includes('typ relay')) {
-        candidateInfo.hasLocalRelay = true;
-      }
-      if (candidate.candidate.includes('typ srflx')) {
-        candidateInfo.hasLocalServerReflexive = true;
-      }
-    }
-  }
-  
-  if ((window as any).__remoteIceCandidates) {
-    for (const candidate of (window as any).__remoteIceCandidates) {
-      if (candidate.candidate.includes('typ relay')) {
-        candidateInfo.hasRemoteRelay = true;
-      }
-      if (candidate.candidate.includes('typ srflx')) {
-        candidateInfo.hasRemoteServerReflexive = true;
-      }
-    }
-  }
-  
-  // Provide specific diagnostic based on connection state and candidates
+  // Provide user-friendly messages based on connection state
   switch (state) {
-    case 'new':
-      return 'الاتصال قيد الإعداد. يرجى الانتظار...';
-    case 'connecting':
-      // Provide more specific info about the connection attempt
-      if (candidateInfo.localCandidates === 0) {
-        return 'لم يتم توليد مرشحات ICE المحلية. قد تكون هناك مشكلة في الاتصال بالإنترنت أو إعدادات جدار الحماية.';
-      }
-      
-      if (!candidateInfo.hasLocalRelay && !candidateInfo.hasLocalServerReflexive) {
-        return 'لم يتم توليد مرشحات STUN/TURN. تأكد من أن منفذ UDP 19302 غير محظور في جدار الحماية.';
-      }
-      
-      if (candidateInfo.localCandidates > 0 && candidateInfo.remoteCandidates === 0) {
-        return 'تم توليد مرشحات ICE المحلية ولكن لم يتم استلام مرشحات من الطرف الآخر بعد. تأكد من وجود الطرف الآخر على الاتصال.';
-      }
-      
-      return 'يتم إنشاء الاتصال. قد يستغرق هذا بعض الوقت حسب إعدادات الشبكة.';
-    case 'connected':
-      return 'تم الاتصال بنجاح! إذا كنت لا تسمع الطرف الآخر، تأكد من تشغيل الصوت في متصفحك.';
-    case 'disconnected':
-      return 'انقطع الاتصال مؤقتًا. جار محاولة إعادة الاتصال...';
-    case 'failed':
-      // More detailed failure diagnosis
-      if (!candidateInfo.hasLocalRelay && !candidateInfo.hasRemoteRelay) {
-        return 'فشل الاتصال. لم يتم استخدام خوادم TURN. هذا يشير إلى مشكلة في جدار الحماية أو تكوين NAT. حاول الاتصال من شبكة أخرى.';
-      }
-      
-      if (candidateInfo.hasLocalRelay && candidateInfo.hasRemoteRelay) {
-        return 'فشل الاتصال رغم وجود مرشحات TURN. قد يكون هناك مشكلة في الشبكة أو تعطل في خدمة TURN.';
-      }
-      
-      return 'فشل الاتصال. يرجى تحديث الصفحة أو إعادة تشغيل الاتصال.';
-    case 'closed':
-      return 'تم إغلاق الاتصال. يمكنك تحديث الصفحة للمحاولة مرة أخرى.';
-    default:
-      return `حالة الاتصال غير معروفة: ${state}. يرجى إعادة تحميل الصفحة.`;
+    case 'new': return 'الاتصال قيد الإعداد. يرجى الانتظار...';
+    case 'connecting': return 'يتم إنشاء الاتصال. قد يستغرق هذا بعض الوقت حسب إعدادات الشبكة.';
+    case 'connected': return 'تم الاتصال بنجاح! إذا كنت لا تسمع الطرف الآخر، تأكد من تشغيل الصوت في متصفحك.';
+    case 'disconnected': return 'انقطع الاتصال مؤقتًا. جار محاولة إعادة الاتصال...';
+    case 'failed': return 'فشل الاتصال. يرجى تحديث الصفحة أو إعادة تشغيل الاتصال.';
+    case 'closed': return 'تم إغلاق الاتصال. يمكنك تحديث الصفحة للمحاولة مرة أخرى.';
+    default: return `حالة الاتصال غير معروفة: ${state}. يرجى إعادة تحميل الصفحة.`;
   }
 }
 
 /**
  * WebRTC service for audio calls
  */
-export function useWebRTC() {
-  const { socket, userId } = useSocket();
+export function useWebRTC(): WebRTCHook {
+  const { socket, userId, isInSetupContext } = useSocket();
   
   // Use shallow refs to the global objects
   const peerConnection = shallowRef<RTCPeerConnection | null>(globalPeerConnection);
@@ -261,79 +307,68 @@ export function useWebRTC() {
    * Initialize local media stream (microphone)
    */
   const initializeLocalStream = async (): Promise<MediaStream> => {
+    // إذا كان التدفق المحلي موجوداً وفيه مسارات صوت، استخدمه
+    if (globalLocalStream && globalLocalStream.getAudioTracks().length > 0) {
+      if (DEBUG) console.log('[WebRTC] Reusing existing local stream');
+      return globalLocalStream;
+    }
+    
     try {
-      if (globalLocalStream) {
-        if (DEBUG) console.log('[WebRTC] Using existing local stream');
-        
-        // Check if audio tracks are still active
-        const audioTracks = globalLocalStream.getAudioTracks();
-        if (audioTracks.length === 0 || !audioTracks[0].enabled) {
-          if (DEBUG) console.log('[WebRTC] Existing stream has no active audio tracks, requesting new stream');
-          // If no active audio tracks, get a new stream
-          globalLocalStream.getTracks().forEach(track => track.stop());
-          globalLocalStream = null;
-        } else {
-          return globalLocalStream;
-        }
-      }
+      // إنشاء طلب للوصول إلى ميكروفون المستخدم
+      if (DEBUG) console.log('[WebRTC] Requesting microphone access');
       
-      if (DEBUG) console.log('[WebRTC] Requesting access to microphone with specific constraints');
-      
-      // Try with more specific audio constraints for better quality
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
-          sampleRate: 48000,
-          channelCount: 2
+          autoGainControl: true
         },
         video: false
       });
       
-      // Double check that we got audio tracks
-      if (stream.getAudioTracks().length === 0) {
-        console.error('[WebRTC] No audio tracks found in stream');
-        throw new Error('No audio tracks available');
+      // التأكد من أن التدفق يحتوي على مسارات صوتية
+      const audioTracks = stream.getAudioTracks();
+      
+      if (audioTracks.length === 0) {
+        throw new Error('No audio tracks available in media stream');
       }
       
       if (DEBUG) {
-        console.log('[WebRTC] Local stream acquired successfully');
-        console.log('[WebRTC] Audio tracks:', stream.getAudioTracks().length);
-        const tracks = stream.getAudioTracks();
-        tracks.forEach(track => {
-          console.log(`[WebRTC] Track: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
-          console.log('[WebRTC] Track settings:', JSON.stringify(track.getSettings()));
-        });
+        console.log(`[WebRTC] Got local stream with ${audioTracks.length} audio tracks`);
+        console.log('[WebRTC] Audio track settings:', audioTracks[0].getSettings());
       }
       
-      // Ensure all tracks are enabled
-      stream.getTracks().forEach(track => {
-        track.enabled = true;
-      });
-      
+      // تخزين التدفق المحلي
       globalLocalStream = stream;
       localStream.value = stream;
+      
+      // استرجاع حالة كتم الصوت وتطبيقها على التدفق الجديد مباشرة
+      const { getSavedMicrophoneState } = useMicrophoneState();
+      const savedMuteState = getSavedMicrophoneState();
+      
+      if (savedMuteState === true) {
+        if (DEBUG) console.log('[WebRTC] Applying saved mute state to new stream (muted)');
+        // تطبيق حالة كتم الصوت على المسارات
+        audioTracks.forEach(track => {
+          track.enabled = false;
+        });
+        // تحديث المتغير العام
+        globalIsAudioMuted.value = true;
+        // إرسال حدث لتحديث واجهة المستخدم
+        window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: true } }));
+      } else {
+        // التأكد من أن الصوت مفعل
+        audioTracks.forEach(track => {
+          track.enabled = true;
+        });
+        globalIsAudioMuted.value = false;
+      }
+      
       return stream;
     } catch (error) {
       console.error('[WebRTC] Error accessing microphone:', error);
-      
-      // Try with simpler constraints as fallback
-      try {
-        if (DEBUG) console.log('[WebRTC] Trying fallback with simpler constraints');
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        
-        if (stream.getAudioTracks().length === 0) {
-          throw new Error('No audio tracks available');
-        }
-        
-        globalLocalStream = stream;
-        localStream.value = stream;
-        return stream;
-      } catch (fallbackError) {
-        console.error('[WebRTC] Fallback also failed:', fallbackError);
-        throw new Error('Could not access microphone. Please check permissions.');
-      }
+      failureReason = `Failed to access microphone: ${error}`;
+      throw error;
     }
   };
   
@@ -360,7 +395,7 @@ export function useWebRTC() {
 
     try {
       // Create a new RTCPeerConnection with our configuration
-    const pc = new RTCPeerConnection(rtcConfiguration);
+    const pc = new RTCPeerConnection(rtcConfiguration.value);
     
       // On negotiation needed
       pc.onnegotiationneeded = async (event) => {
@@ -562,6 +597,50 @@ export function useWebRTC() {
   };
   
   /**
+   * Establish WebRTC connection with consistent error handling
+   */
+  const establishConnection = async (targetPartnerId: string | null): Promise<any> => {
+    if (!targetPartnerId || !socket.value) {
+      const errorMsg = 'لا يمكن إنشاء الاتصال: معرّف الشريك أو الاتصال غير متوفر';
+      console.error(`[WebRTC] ${errorMsg}`);
+      lastConnectionError = errorMsg;
+      return { error: errorMsg };
+    }
+
+    // Save partner ID globally
+    globalPartnerId.value = targetPartnerId;
+    partnerId.value = targetPartnerId;
+    
+    try {
+      // Ensure we have local stream
+      if (!globalLocalStream) {
+        await initializeLocalStream();
+      }
+
+      // Create fresh connection
+      const pc = createPeerConnection();
+      
+      // Add local tracks
+      if (globalLocalStream) {
+        globalLocalStream.getTracks().forEach(track => {
+          pc.addTrack(track, globalLocalStream!);
+        });
+      } else {
+        throw new Error('لا يمكن الوصول للميكروفون');
+      }
+      
+      // Update connection state
+      updateGlobalState('connecting');
+      
+      return pc;
+    } catch (error) {
+      console.error('[WebRTC] Error establishing connection:', error);
+      lastConnectionError = `خطأ في إنشاء الاتصال: ${error}`;
+      return { error: lastConnectionError };
+    }
+  };
+  
+  /**
    * Create an offer and send it to the target peer
    */
   const createOffer = async (targetPartnerId: string | null): Promise<any> => {
@@ -570,39 +649,11 @@ export function useWebRTC() {
       clearTimeout((window as any).__webrtcConnectionTimeout);
     }
     
-    if (!targetPartnerId) {
-      const errorMsg = 'Cannot create offer: No target partner ID provided';
-      console.error(`[WebRTC] ${errorMsg}`);
-      lastConnectionError = errorMsg;
-      return { error: errorMsg };
-    }
-    
-    if (!socket.value) {
-      const errorMsg = 'Cannot create offer: socket not available';
-      console.error(`[WebRTC] ${errorMsg}`);
-      lastConnectionError = errorMsg;
-      return { error: errorMsg };
-    }
-    
-    // Make sure we have access to the microphone before creating an offer
-    if (!globalLocalStream) {
-      try {
-        if (DEBUG) console.log('[WebRTC] Initializing local stream before creating offer');
-        await initializeLocalStream();
-      } catch (error) {
-        console.error('[WebRTC] Failed to initialize local stream:', error);
-        lastConnectionError = `Failed to access microphone: ${error}`;
-        return { error: `Failed to access microphone: ${error}` };
-      }
-    }
-    
-    if (DEBUG) console.log(`[WebRTC] Creating offer for partner: ${targetPartnerId}`);
-    
-    // تحقق من وجود تفاوض جارٍ
+    // Check if negotiation is already in progress
     if (isNegotiating) {
-      console.warn('[WebRTC] Negotiation already in progress, deferring new offer');
+      console.warn('[WebRTC] مفاوضة جارية بالفعل، تأجيل العرض الجديد');
       
-      // إعادة المحاولة بعد تأخير قصير
+      // Try again after a short delay
       return new Promise(resolve => {
         setTimeout(async () => {
           if (!isNegotiating) {
@@ -616,81 +667,30 @@ export function useWebRTC() {
     
     // Mark that we are negotiating
     isNegotiating = true;
-    globalPartnerId.value = targetPartnerId;
-    partnerId.value = targetPartnerId;
     
     try {
-      // Store the partner ID
-      if (DEBUG) console.log(`[WebRTC] Setting partner ID: ${targetPartnerId}`);
+      // Establish connection
+      const pc = await establishConnection(targetPartnerId);
+      if (pc.error) return pc;
       
-      // إعادة تكوين WebRTC للتأكد من أن الاتصال نظيف
-      const pc = createPeerConnection();
-      
-      // إضافة المسارات المحلية
-      if (globalLocalStream) {
-        if (DEBUG) {
-          console.log('[WebRTC] Adding local tracks to connection');
-          console.log(`[WebRTC] Local stream has ${globalLocalStream.getTracks().length} tracks`);
-        }
-        
-        // إعادة تعيين المرسلين إذا كانوا موجودين بالفعل
-        const localMediaStream: MediaStream = globalLocalStream;
-        if (pc.getSenders().length > 0) {
-          if (DEBUG) console.log('[WebRTC] Replacing existing senders');
-          let i = 0;
-          localMediaStream.getTracks().forEach((track: MediaStreamTrack) => {
-            if (pc.getSenders()[i]) {
-              pc.getSenders()[i].replaceTrack(track);
-              i++;
-            } else {
-              pc.addTrack(track, localMediaStream);
-            }
-          });
-        } else {
-          // إضافة المسارات عادية إذا لم تكن موجودة
-          localMediaStream.getTracks().forEach((track: MediaStreamTrack) => {
-            pc.addTrack(track, localMediaStream);
-          });
-        }
-      } else {
-        console.error('[WebRTC] No local stream to add tracks from');
-        // حاول الحصول على تدفق محلي مرة أخرى
-        await initializeLocalStream();
-        if (globalLocalStream) {
-          const localMediaStream: MediaStream = globalLocalStream;
-          localMediaStream.getTracks().forEach((track: MediaStreamTrack) => {
-            pc.addTrack(track, localMediaStream);
-          });
-        }
-      }
-      
-      // تحديث حالة الاتصال
-      globalConnectionState.value = 'connecting';
-      connectionState.value = 'connecting';
-      
-      // إنشاء عرض مع الخيارات المناسبة
+      // Create offer
       if (DEBUG) console.log('[WebRTC] Creating offer');
       const offer = await pc.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false,
       });
       
-      // تعيين الوصف المحلي
+      // Set local description
       if (DEBUG) console.log('[WebRTC] Setting local description');
       await pc.setLocalDescription(offer);
       
-      // استخدام Trickle ICE بدلاً من انتظار اكتمال التجميع
-      // سيتم إرسال العرض فورًا وإرسال مرشحات ICE لاحقًا عند توليدها
+      // Send offer using both methods for compatibility
       if (socket.value && targetPartnerId) {
-        if (DEBUG) console.log('[WebRTC] Sending immediate offer using Trickle ICE');
-        
-        // للتوافق مع الخادم الحالي
         socket.value.emit('voice-offer', {
           offer: pc.localDescription,
           to: targetPartnerId
         });
         
-        // إضافة إرسال بالتنسيق الجديد
         socket.value.emit('webrtc-signal', {
           type: 'offer',
           offer: pc.localDescription,
@@ -698,10 +698,8 @@ export function useWebRTC() {
         });
       }
       
-      // إعداد مؤقت للتحقق من نجاح الاتصال
+      // Setup monitoring
       setupConnectionTimeout(pc);
-      
-      // بدء مراقبة الاتصال
       startConnectionMonitoring();
       
       if (DEBUG) console.log('[WebRTC] Offer creation complete');
@@ -712,7 +710,7 @@ export function useWebRTC() {
       isNegotiating = false;
       return { error: `Failed to create offer: ${error}` };
     } finally {
-      // Mark that we are done negotiating
+      // Mark that we are done negotiating after a delay
       setTimeout(() => {
         isNegotiating = false;
       }, 2000);
@@ -721,28 +719,65 @@ export function useWebRTC() {
   
   // Helper function to wait for ICE gathering to complete
   const waitForIceGatheringComplete = (pc: RTCPeerConnection): Promise<void> => {
+    console.log('Waiting for ICE gathering to complete...');
+    
+    // إذا كانت عملية جمع ICE كاملة بالفعل، نعود مباشرة
     if (pc.iceGatheringState === 'complete') {
-      if (DEBUG) console.log('[WebRTC] ICE gathering already complete');
+      console.log('ICE gathering already complete');
       return Promise.resolve();
     }
     
+    // زيادة وقت الانتظار من 1000ms إلى 6000ms وإضافة عد تنازلي للمحاولات
+    const maxWaitTime = 6000; // 6 seconds instead of 1s
+    const checkInterval = 500;
+    const maxAttempts = Math.ceil(maxWaitTime / checkInterval);
+    let attempts = 0;
+    
+    let iceCandidatesCount = 0;
+    
     return new Promise<void>((resolve) => {
       const checkState = () => {
+        attempts++;
+        
         if (pc.iceGatheringState === 'complete') {
-          pc.removeEventListener('icegatheringstatechange', checkState);
+          console.log(`ICE gathering complete after ${attempts} attempts`);
           resolve();
+          return;
         }
+        
+        // عدد المرشحات المجمعة لتتبع التقدم
+        if (window.__localIceCandidates && window.__localIceCandidates.length > iceCandidatesCount) {
+          iceCandidatesCount = window.__localIceCandidates.length;
+          console.log(`ICE candidates collected so far: ${iceCandidatesCount}`);
+        }
+        
+        // حل الوعد إذا تم تجميع عدد كافٍ من المرشحات حتى لو لم تكتمل العملية رسميًا
+        if (iceCandidatesCount >= 3 && attempts > maxAttempts / 2) {
+          console.log(`Sufficient ICE candidates (${iceCandidatesCount}) collected after ${attempts} attempts`);
+        resolve();
+          return;
+        }
+        
+        // حل الوعد إذا تم الوصول إلى الحد الأقصى من المحاولات
+        if (attempts >= maxAttempts) {
+          console.log(`Reached maximum attempts (${maxAttempts}), proceeding with ${iceCandidatesCount} ICE candidates`);
+          resolve();
+          return;
+        }
+        
+        setTimeout(checkState, checkInterval);
       };
       
-      pc.addEventListener('icegatheringstatechange', checkState);
+      // استخدام حدث لتتبع جمع ICE
+      pc.addEventListener('icegatheringstatechange', () => {
+        console.log('ICE gathering state changed:', pc.iceGatheringState);
+        if (pc.iceGatheringState === 'complete') {
+          resolve();
+        }
+      });
       
-      // تقليل وقت الانتظار من 2000 إلى 1000 مللي ثانية
-      // سيتم المتابعة حتى لو لم تكتمل عملية التجميع
-      setTimeout(() => {
-        pc.removeEventListener('icegatheringstatechange', checkState);
-        if (DEBUG) console.log('[WebRTC] ICE gathering timed out, but continuing anyway');
-        resolve();
-      }, 1000);
+      // بدء فحص الحالة
+      setTimeout(checkState, 0);
     });
   };
   
@@ -960,6 +995,10 @@ export function useWebRTC() {
     // عكس حالة كتم الصوت الحالية
     const shouldMute = !globalIsAudioMuted.value;
     
+    // حفظ حالة كتم الصوت في التخزين المحلي
+    const { saveMicrophoneState } = useMicrophoneState();
+    saveMicrophoneState(shouldMute);
+    
     // حالة كتم الصوت
     if (shouldMute) {
       if (DEBUG) console.log('[WebRTC] Muting microphone - stopping all tracks');
@@ -967,32 +1006,43 @@ export function useWebRTC() {
       // إيقاف مسارات الصوت إذا كانت موجودة
       if (globalLocalStream) {
         globalLocalStream.getAudioTracks().forEach(track => {
-          track.stop();
+          track.enabled = false; // بدلاً من إيقاف المسار تماماً، نقوم بتعطيله فقط
+          // track.stop(); - لا نوقف المسار تماماً
         });
         
-        // تصفير المتغيرات العامة
-        globalLocalStream = null;
-        localStream.value = null;
+        // لا نصفر المتغيرات العامة لنسمح باستعادة الميكروفون بسهولة
+        // globalLocalStream = null;
+        // localStream.value = null;
       }
       
       // تحديث حالة كتم الصوت
       globalIsAudioMuted.value = true;
       
-      return false; // الميكروفون الآن مكتوم
+      // إرسال حدث لتحديث واجهة المستخدم
+      window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: true } }));
+      
+      return true; // عملية كتم الصوت نجحت
     } 
     // حالة إلغاء كتم الصوت
     else {
-      if (DEBUG) console.log('[WebRTC] Unmuting microphone - requesting new permission');
+      if (DEBUG) console.log('[WebRTC] Unmuting microphone');
       
       try {
-        // إلغاء أي stream موجود
-        if (globalLocalStream) {
-          globalLocalStream.getTracks().forEach(track => track.stop());
-          globalLocalStream = null;
-          localStream.value = null;
+        // إذا كان لدينا تدفق صوتي بالفعل، نعيد تفعيله
+        if (globalLocalStream && globalLocalStream.getAudioTracks().length > 0) {
+          globalLocalStream.getAudioTracks().forEach(track => {
+            track.enabled = true;
+          });
+          
+          globalIsAudioMuted.value = false;
+          
+          // إرسال حدث لتحديث واجهة المستخدم
+          window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: false } }));
+          
+          return true;
         }
         
-        // إجبار المتصفح على طلب إذن جديد
+        // إذا لم يكن لدينا تدفق صوتي، نطلب إذن جديد
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
@@ -1038,6 +1088,9 @@ export function useWebRTC() {
         // تحديث حالة كتم الصوت - مهم!
         globalIsAudioMuted.value = false;
         
+        // إرسال حدث لتحديث واجهة المستخدم
+        window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: false } }));
+        
         return true; // الميكروفون الآن غير مكتوم
       } catch (error) {
         console.error('[WebRTC] Error unmuting microphone:', error);
@@ -1048,6 +1101,10 @@ export function useWebRTC() {
           globalLocalStream = fallbackStream;
           localStream.value = fallbackStream;
           globalIsAudioMuted.value = false;
+          
+          // إرسال حدث لتحديث واجهة المستخدم
+          window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: false } }));
+          
           return true;
         } catch (fallbackError) {
           console.error('[WebRTC] Fallback microphone access also failed:', fallbackError);
@@ -1113,17 +1170,21 @@ export function useWebRTC() {
     // Reset state
     globalConnectionState.value = 'closed';
     connectionState.value = 'closed';
+    
+    // Dispatch connection-closed custom event to notify all components
+    window.dispatchEvent(new CustomEvent('connection-closed', { 
+      detail: { timestamp: Date.now() } 
+    }));
   };
   
   /**
    * Close and cleanup all media streams
    */
   const cleanup = (): void => {
-    if (DEBUG) console.log('[WebRTC] Full cleanup initiated');
     closeConnection();
+    cleanupReconnectionTimer();
     
     if (globalLocalStream) {
-      if (DEBUG) console.log('[WebRTC] Stopping local stream tracks');
       globalLocalStream.getTracks().forEach(track => {
         track.stop();
       });
@@ -1131,7 +1192,20 @@ export function useWebRTC() {
       localStream.value = null;
     }
     
-    if (DEBUG) console.log('[WebRTC] Cleanup complete');
+    if (globalRemoteStream) {
+      globalRemoteStream.getTracks().forEach(track => {
+        track.stop();
+      });
+      globalRemoteStream = new MediaStream();
+      remoteStream.value = globalRemoteStream;
+    }
+    
+    // Reset all state
+    globalPeerConnection = null;
+    peerConnection.value = null;
+    globalConnectionState.value = 'closed';
+    connectionState.value = 'closed';
+    reconnectionAttempts = 0;
   };
   
   /**
@@ -1268,6 +1342,14 @@ export function useWebRTC() {
         }
         console.log('[WebRTC] WebRTC connection fully closed due to partner disconnection');
       }
+      
+      // إرسال حدث لإعلام واجهة المستخدم بانقطاع الاتصال
+      window.dispatchEvent(new CustomEvent('connection-state-changed', { 
+        detail: { 
+          state: 'disconnected',
+          reason: data.reason || 'partner-left' 
+        } 
+      }));
     });
     
     // Handle WebRTC connection state changes from other party
@@ -1280,6 +1362,14 @@ export function useWebRTC() {
         if (data.state === 'failed' || data.state === 'closed') {
           updateGlobalState('failed');
           
+          // إرسال حدث لإعلام واجهة المستخدم بفشل الاتصال
+          window.dispatchEvent(new CustomEvent('connection-state-changed', { 
+            detail: { 
+              state: 'failed',
+              reason: data.reason || 'connection-failed' 
+            } 
+          }));
+          
           // Close our local connection if it's still open
           if (globalPeerConnection && globalPeerConnection.connectionState !== 'closed') {
             console.log('[WebRTC] Closing local connection due to remote state:', data.state);
@@ -1288,7 +1378,79 @@ export function useWebRTC() {
         } else {
           // Just log for disconnected state, might recover
           console.log('[WebRTC] Partner connection state is disconnected, waiting to see if it recovers');
+          
+          // إرسال حدث لإعلام واجهة المستخدم بانقطاع الاتصال المؤقت
+          window.dispatchEvent(new CustomEvent('connection-state-changed', { 
+            detail: { 
+              state: 'disconnected',
+              reason: 'network-disconnect',
+              temporary: true
+            } 
+          }));
         }
+      }
+    });
+    
+    // Handle disconnect partner event - preserve mute state
+    socket.value.on('disconnect-partner', () => {
+      console.log('[WebRTC] Disconnect partner event received - preserving mic mute state');
+      const currentMuteState = globalIsAudioMuted.value;
+      
+      // Just log the current state - we don't need to do anything else
+      // as the mute state is already stored in localStorage
+      if (DEBUG) console.log(`[WebRTC] Current mute state before disconnect: ${currentMuteState ? 'muted' : 'unmuted'}`);
+    });
+    
+    // When matched with new partner, restore mic state
+    socket.value.on('matched', async (data: any) => {
+      console.log('[WebRTC] Matched event received - ensuring mic state is correct');
+      
+      // حفظ معرف الشريك الجديد
+      if (data && data.partnerId) {
+        partnerId.value = data.partnerId;
+        globalPartnerId.value = data.partnerId;
+      }
+      
+      // التأكد من أن حالة كتم الصوت مطبقة بشكل صحيح
+      if (globalLocalStream && globalLocalStream.getAudioTracks().length > 0) {
+        const { getSavedMicrophoneState } = useMicrophoneState();
+        const savedMuteState = getSavedMicrophoneState();
+        
+        if (savedMuteState !== null) {
+          if (DEBUG) console.log(`[WebRTC] Applying saved mic state to active stream: ${savedMuteState ? 'muted' : 'unmuted'}`);
+          
+          // تطبيق حالة كتم الصوت
+          globalLocalStream.getAudioTracks().forEach(track => {
+            track.enabled = !savedMuteState;
+          });
+          
+          // تحديث المتغير العام
+          globalIsAudioMuted.value = savedMuteState;
+          
+          // إرسال حدث لتحديث واجهة المستخدم
+          window.dispatchEvent(new CustomEvent('microphone-state-changed', { detail: { isMuted: savedMuteState } }));
+        }
+      } else {
+        // إذا لم يكن هناك تدفق صوتي، قم بإنشائه وتطبيق حالة كتم الصوت عليه
+        try {
+          await initializeLocalStream();
+          // ملاحظة: initializeLocalStream الآن يطبق حالة كتم الصوت المحفوظة تلقائيًا
+        } catch (error) {
+          console.error('[WebRTC] Error initializing stream after match:', error);
+        }
+      }
+    });
+
+    // Add enhanced reconnection for socket events
+    socket.value?.on('disconnect', () => {
+      console.log('[WebRTC] Socket disconnected, cleaning up WebRTC connection');
+      cleanupReconnectionTimer();
+    });
+
+    socket.value?.on('reconnect', () => {
+      console.log('[WebRTC] Socket reconnected, attempting to recover WebRTC connection');
+      if (globalPartnerId.value && reconnectionTimer === null) {
+        attemptReconnection(globalPartnerId.value);
       }
     });
   }
@@ -1298,58 +1460,55 @@ export function useWebRTC() {
   
   // Clean up resources when component is unmounted
   onUnmounted(() => {
-    // We don't close connections here anymore to maintain call during component changes
-    // Instead, we just remove our local references
-    peerConnection.value = null;
-    localStream.value = null;
-    remoteStream.value = null;
+    cleanupReconnectionTimer();
   });
   
-  // دالة لإرسال نبضات اتصال للحفاظ على استقرار الاتصال
+  /**
+   * Start heartbeat to keep connection alive and monitor health
+   */
   function startConnectionHeartbeat() {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
     }
     
-    // بدء إرسال نبضات للحفاظ على الاتصال نشطًا
+    // Start sending heartbeats
     heartbeatInterval = window.setInterval(() => {
       if (globalPeerConnection && 
           (globalConnectionState.value === 'connected' || 
            globalConnectionState.value === 'connecting')) {
         
-        // إنشاء قناة بيانات جديدة كنبضة لإبقاء الاتصال نشطًا
+        // Create data channel as heartbeat to keep connection alive
         try {
           const channel = globalPeerConnection.createDataChannel(`heartbeat_${Date.now()}`);
           
-          // إغلاق القناة بعد فترة قصيرة
+          // Close channel after a short time
           setTimeout(() => {
             try {
               channel.close();
             } catch (e) {
-              // تجاهل أي خطأ عند الإغلاق
+              // Ignore errors on closing
             }
           }, 1000);
           
           if (DEBUG) console.log('[WebRTC] Heartbeat sent to keep connection alive');
           
-          // إذا كان الاتصال في حالة "جاري الاتصال" لفترة طويلة، إرسال إشعار تشخيصي
+          // If connection is stuck in connecting state for too long, send diagnostic report
           if (globalConnectionState.value === 'connecting' && connectionRetryCount > 3) {
             console.log('[WebRTC] Connection stuck in connecting state. Diagnostic report:');
             console.log(getConnectionDiagnosticReport());
           }
         } catch (e) {
-          // تجاهل أخطاء إنشاء قناة البيانات إذا كان الاتصال مغلقًا بالفعل
+          // Ignore errors creating data channel if connection is already closed
         }
         
-        // التحقق من حالة المسارات
-        checkAndFixTracks();
+        // Check tracks and fix any issues using our unified function
+        diagnoseAndFixConnection();
       } else {
         stopConnectionHeartbeat();
       }
     }, HEARTBEAT_INTERVAL) as unknown as number;
   }
 
-  // إيقاف نبضات الاتصال
   function stopConnectionHeartbeat() {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
@@ -1428,242 +1587,200 @@ export function useWebRTC() {
    * تستخدم هذه الوظيفة للتحقق من مسارات الصوت وإصلاح المشاكل الشائعة
    */
   function diagnoseAndFixAudioIssues() {
-    if (DEBUG) console.log('[WebRTC] 🔍 Diagnosing audio connection issues');
-    
-    // فحص حالة الاتصال
     if (!globalPeerConnection) {
-      if (DEBUG) console.log('[WebRTC] 🔴 No peer connection exists');
+      console.warn('[AudioFix] No peer connection available');
       return false;
     }
     
-    if (DEBUG) {
-      console.log(`[WebRTC] Connection state: ${globalPeerConnection.connectionState}`);
-      console.log(`[WebRTC] ICE connection state: ${globalPeerConnection.iceConnectionState}`);
-      console.log(`[WebRTC] Signaling state: ${globalPeerConnection.signalingState}`);
+    // تحقق من وجود مسارات محلية
+    if (!globalLocalStream || !globalLocalStream.getTracks().length) {
+      console.warn('[AudioFix] Local stream missing or has no tracks');
+      
+      // محاولة إعادة إنشاء مسار الصوت المحلي
+      initializeLocalStream()
+        .then(stream => {
+          // تحديث التدفق العالمي
+          globalLocalStream = stream;
+          
+          // استبدال المسارات في الاتصال الحالي
+          if (globalPeerConnection) {
+            const senders = globalPeerConnection.getSenders();
+            senders.forEach(sender => {
+              if (sender.track && sender.track.kind === 'audio' && stream.getAudioTracks().length > 0) {
+                sender.replaceTrack(stream.getAudioTracks()[0])
+                  .then(() => console.log('[AudioFix] Successfully replaced audio track'))
+                  .catch(err => console.error('[AudioFix] Error replacing track:', err));
+              }
+            });
+          }
+        })
+        .catch(err => console.error('[AudioFix] Failed to reinitialize local stream:', err));
+      return true;
     }
     
-    // فحص مسارات الصوت المستقبلة
-    const receivers = globalPeerConnection.getReceivers();
-    console.log(`[WebRTC] Connection has ${receivers.length} receivers`);
+    // تحقق من حالة المسارات المحلية
+    const localAudioTracks = globalLocalStream.getAudioTracks();
     
-    let foundAudioReceiver = false;
-    let audioReceiverStats = {};
-    
-    // حصر جميع الإحصاءات للتشخيص
-    globalPeerConnection.getStats().then((stats) => {
-      stats.forEach((report) => {
-        if (report.type === 'inbound-rtp' && report.kind === 'audio') {
-          audioReceiverStats = report;
-          console.log('[WebRTC] Audio receiver stats:', report);
-          
-          // فحص وجود حزم صوتية
-          if (report.packetsReceived === 0 || report.bytesReceived === 0) {
-            console.log('[WebRTC] 🔴 Warning: No audio packets received!');
-          } else {
-            console.log(`[WebRTC] ✅ Receiving audio: ${report.packetsReceived} packets, ${report.bytesReceived} bytes`);
+    if (!localAudioTracks.length) {
+      console.warn('[AudioFix] No audio tracks in local stream');
+      
+      // محاولة طلب الوصول للميكروفون مجددًا
+      navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(stream => {
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            // إضافة مسار الصوت للتدفق الحالي
+            globalLocalStream?.addTrack(audioTrack);
+            
+            // إضافة المسار الجديد للاتصال إن وجد
+            if (globalPeerConnection) {
+              globalPeerConnection.addTrack(audioTrack, globalLocalStream!);
+              console.log('[AudioFix] Added new audio track to connection');
+            }
           }
-        }
-      });
-    }).catch(e => console.error('[WebRTC] Error getting stats:', e));
+        })
+        .catch(err => console.error('[AudioFix] Could not get user media:', err));
+      return true;
+    }
     
-    receivers.forEach((receiver, i) => {
-      const track = receiver.track;
-      if (track && track.kind === 'audio') {
-        foundAudioReceiver = true;
-        console.log(`[WebRTC] Audio receiver ${i} - Track: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
-        
-        // محاولة إصلاح المسارات المعطلة
-        if (!track.enabled || track.muted) {
-          console.log('[WebRTC] 🟠 Found disabled/muted audio track, enabling it');
+    // تحقق من حالة تمكين المسارات المحلية
+    let hasFixedLocalTracks = false;
+    localAudioTracks.forEach(track => {
+      if (!track.enabled && !globalIsAudioMuted.value) {
+        console.log('[AudioFix] Fixing disabled local audio track');
           track.enabled = true;
-        }
+        hasFixedLocalTracks = true;
+      }
+      
+      // تحقق من حالة المسار وإعادة تشغيله إذا كان متوقفًا
+      if (track.readyState === 'ended') {
+        console.warn('[AudioFix] Local audio track in ended state, requesting new track');
         
-        // إضافة مستمعين أحداث للمسار
-        track.onmute = () => {
-          console.log('[WebRTC] Track muted event - automatically unmuting');
-          track.enabled = true;
-        };
+        // طلب مسار جديد
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          .then(stream => {
+            const newTrack = stream.getAudioTracks()[0];
+            if (newTrack) {
+              // استبدال المسار القديم بالجديد
+              const senders = globalPeerConnection?.getSenders();
+              senders?.forEach(sender => {
+                if (sender.track && sender.track.kind === 'audio') {
+                  sender.replaceTrack(newTrack)
+                    .then(() => console.log('[AudioFix] Successfully replaced ended audio track'))
+                    .catch(err => console.error('[AudioFix] Error replacing ended track:', err));
+                }
+              });
+            }
+          })
+          .catch(err => console.error('[AudioFix] Could not get replacement track:', err));
         
-        track.onended = () => {
-          console.log('[WebRTC] Track ended event - attempting to recreate connection');
-          if (!isRestartingIce && globalPeerConnection && globalPeerConnection.connectionState === 'connected') {
-            attemptConnectionRecovery();
-          }
-        };
+        hasFixedLocalTracks = true;
       }
     });
     
-    if (!foundAudioReceiver) {
-      console.log('[WebRTC] 🔴 No audio receivers found. Remote party may not be sending audio.');
+    // تحقق من المسارات البعيدة
+    if (!globalRemoteStream || !globalRemoteStream.getTracks().length) {
+      console.warn('[AudioFix] Remote stream missing or has no tracks');
       
-      // التحقق من ترانسيفرز - وإعدادها للاستقبال إذا لزم الأمر
-      const transceivers = globalPeerConnection.getTransceivers();
-      let fixedTransceivers = false;
+      // تحقق مما إذا كانت هناك مسارات بعيدة لم تتم إضافتها للتدفق
+      const receivers = globalPeerConnection.getReceivers();
+      const remoteTracks = receivers
+        .filter(receiver => receiver.track && receiver.track.kind === 'audio')
+        .map(receiver => receiver.track);
       
-      transceivers.forEach((transceiver) => {
-        console.log(`[WebRTC] Transceiver direction: ${transceiver.direction}, currentDirection: ${transceiver.currentDirection}`);
+      if (remoteTracks.length > 0) {
+        console.log('[AudioFix] Found remote tracks in receivers, adding to remote stream');
         
-        // التأكد من أن الترانسيفر مهيئ لاستقبال الصوت
-        if (transceiver.direction === 'sendonly' || transceiver.direction === 'inactive') {
-          try {
-            console.log('[WebRTC] 🟠 Fixing transceiver direction to sendrecv');
-            transceiver.direction = 'sendrecv';
-            fixedTransceivers = true;
-          } catch (e) {
-            console.error('[WebRTC] Error updating transceiver direction:', e);
-          }
+        // إنشاء تدفق بعيد جديد إذا لم يكن موجودًا
+        if (!globalRemoteStream) {
+          globalRemoteStream = new MediaStream();
         }
-      });
-      
-      // إعادة التفاوض إذا تم إجراء أي تغييرات على ترانسيفرز
-      if (fixedTransceivers && !isNegotiating) {
-        console.log('[WebRTC] Triggering renegotiation after fixing transceivers');
-        startNegotiation();
-      }
-      
-      // محاولة إصلاح حالة استقبال الصوت
-      if (globalPeerConnection.connectionState === 'connected') {
-        console.log('[WebRTC] 🟠 Connection is established but no audio receivers. Checking SDP parameters...');
         
-        // طلب المسارات البعيدة من الطرف الآخر مرة أخرى إذا كان الاتصال ناجحًا
-        if (!isNegotiating && partnerId.value) {
-          console.log('[WebRTC] Trying to recover audio by sending refresh signal');
-          socket.value?.emit('webrtc-signal', {
-            type: 'refresh-tracks',
-            to: partnerId.value
-          });
-        }
-      }
-    }
-    
-    // فحص مسارات الصوت المحلية
-    if (globalLocalStream) {
-      const localAudioTracks = globalLocalStream.getAudioTracks();
-      console.log(`[WebRTC] Local stream has ${localAudioTracks.length} audio tracks`);
-      
-      if (localAudioTracks.length === 0) {
-        // لا توجد مسارات صوت محلية، محاولة إعادة تهيئة الميكروفون
-        console.log('[WebRTC] 🔴 No local audio tracks! Trying to reinitialize microphone...');
-        initializeLocalStream().then(() => {
-          if (globalPeerConnection && globalPeerConnection.connectionState === 'connected') {
-            console.log('[WebRTC] Added new local audio tracks, restarting connection');
-            // إعادة بدء الاتصال مع المسارات الجديدة
-            startNegotiation();
-          }
-        }).catch(e => console.error('[WebRTC] Failed to reinitialize local stream:', e));
-      } else {
-        localAudioTracks.forEach((track, i) => {
-          console.log(`[WebRTC] Local audio track ${i}: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
-          
-          // التأكد من أن المسارات المحلية مفعلة (إلا إذا كان المستخدم قد قام بكتمها عمدًا)
-          if (!track.enabled && !globalIsAudioMuted.value) {
-            console.log('[WebRTC] 🟠 Local track disabled but not muted by user, enabling it');
-            track.enabled = true;
+        // إضافة المسارات للتدفق البعيد
+        remoteTracks.forEach(track => {
+          if (!globalRemoteStream?.getTracks().includes(track)) {
+            globalRemoteStream?.addTrack(track);
+            console.log('[AudioFix] Added missing remote track to stream');
           }
         });
+        
+        return true;
       }
-    } else {
-      console.log('[WebRTC] 🔴 No local stream available');
+      
+      // إرسال إشعار للطرف الآخر بمشكلة في الصوت
+      if (globalPartnerId.value) {
+        socket.value?.emit('audio-troubleshoot-request', {
+          to: globalPartnerId.value
+        });
+        console.log('[AudioFix] Sent audio troubleshoot request to partner');
+      }
     }
     
-    // فحص مسارات الصوت البعيدة
+    // تحقق من حالة تدفق الصوت للمسارات البعيدة
     if (globalRemoteStream) {
       const remoteAudioTracks = globalRemoteStream.getAudioTracks();
-      console.log(`[WebRTC] Remote stream has ${remoteAudioTracks.length} audio tracks`);
       
-      remoteAudioTracks.forEach((track, i) => {
-        console.log(`[WebRTC] Remote audio track ${i}: ${track.label}, enabled: ${track.enabled}, muted: ${track.muted}, readyState: ${track.readyState}`);
-        
-        // محاولة إصلاح المسارات المعطلة
-        if (!track.enabled || track.muted) {
-          console.log('[WebRTC] 🟠 Found disabled remote audio track, enabling it');
+      let hasFixedRemoteTracks = false;
+      remoteAudioTracks.forEach(track => {
+        if (!track.enabled) {
+          console.log('[AudioFix] Fixing disabled remote audio track');
           track.enabled = true;
-        }
-        
-        if (track.readyState !== 'live') {
-          console.log('[WebRTC] 🔴 Remote track not live! ReadyState:', track.readyState);
-          // التحقق مما إذا كان المسار نفسه موجود في المستقبلات
-          const matchingReceiver = globalPeerConnection ? Array.from(globalPeerConnection.getReceivers()).find(
-            receiver => receiver.track && receiver.track.id === track.id
-          ) : null;
-          
-          if (!matchingReceiver) {
-            console.log('[WebRTC] Remote track not found in receivers, attempting to recreate connection');
-            if (globalPeerConnection && globalPeerConnection.connectionState === 'connected' && !isNegotiating) {
-              startNegotiation();
-            }
-          }
+          hasFixedRemoteTracks = true;
         }
       });
       
-      if (remoteAudioTracks.length === 0) {
-        console.log('[WebRTC] 🔴 No audio tracks in remote stream. Checking for receivers...');
-        
-        // محاولة إضافة مسارات من المستقبلات إلى التدفق البعيد
-        const audioReceivers = globalPeerConnection ? Array.from(globalPeerConnection.getReceivers())
-          .filter(receiver => receiver.track && receiver.track.kind === 'audio') : [];
-        
-        if (audioReceivers.length > 0) {
-          console.log('[WebRTC] Found audio receivers but they are not in remote stream. Adding them now.');
-          audioReceivers.forEach(receiver => {
-            if (receiver.track && globalRemoteStream) {
-              console.log('[WebRTC] Adding track from receiver to remote stream:', receiver.track.id);
-              globalRemoteStream.addTrack(receiver.track);
-            }
-          });
-          
-          // تحديث متغير التدفق البعيد للمكونات
-          remoteStream.value = globalRemoteStream;
-        }
+      if (hasFixedRemoteTracks) {
+        return true;
       }
-    } else if (globalPeerConnection && globalPeerConnection.getReceivers().length > 0) {
-      console.log('[WebRTC] 🔴 No remote stream but receivers exist! Creating new remote stream');
-      
-      // إنشاء تدفق بعيد جديد
-      globalRemoteStream = new MediaStream();
-      
-      // إضافة كل المسارات من المستقبلات
-      const audioReceivers = Array.from(globalPeerConnection.getReceivers())
-        .filter(receiver => receiver.track && receiver.track.kind === 'audio');
-      
-      if (audioReceivers.length > 0) {
-        audioReceivers.forEach(receiver => {
-          if (receiver.track && globalRemoteStream) {
-            console.log('[WebRTC] Adding track to new remote stream:', receiver.track.id);
-            globalRemoteStream.addTrack(receiver.track);
-          }
-        });
-      }
-      
-      // تحديث متغير التدفق البعيد للمكونات
-      remoteStream.value = globalRemoteStream;
-    } else {
-      console.log('[WebRTC] 🔴 No remote stream or receivers available');
     }
     
-    // التأكد من أن العنصر الصوتي يستخدم التدفق البعيد
-    setTimeout(() => {
-      const audioElements = document.querySelectorAll('audio');
-      if (audioElements.length > 0 && globalRemoteStream) {
-        console.log(`[WebRTC] Found ${audioElements.length} audio elements, ensuring they use remote stream`);
-        Array.from(audioElements).forEach((audioEl, i) => {
-          if (audioEl.srcObject !== globalRemoteStream) {
-            console.log(`[WebRTC] Audio element ${i} not using correct stream, updating`);
-            audioEl.srcObject = globalRemoteStream;
-            audioEl.muted = false;
-            audioEl.volume = 1.0;
-            
-            // محاولة تشغيل الصوت
-            audioEl.play().catch(e => console.log('[WebRTC] Error playing audio:', e));
+    // فحص إحصائيات الاتصال للمشاكل الأخرى
+    globalPeerConnection.getStats()
+      .then(stats => {
+        let audioLevelDetected = false;
+        let packetsReceived = false;
+        
+        stats.forEach(report => {
+          // تحقق من مستويات الصوت
+          if (report.type === 'track' && report.kind === 'audio') {
+            if (report.audioLevel && report.audioLevel > 0) {
+              audioLevelDetected = true;
+            }
+          }
+          
+          // تحقق من استلام الحزم
+          if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+            if (report.packetsReceived && report.packetsReceived > 0) {
+              packetsReceived = true;
+            }
           }
         });
-      }
-    }, 100);
+        
+        if (!packetsReceived) {
+          console.warn('[AudioFix] No audio packets being received');
+          
+          // قد تكون هناك مشكلة في خوادم TURN/STUN
+          // محاولة التبديل إلى تكوين TURN فقط
+          if (rtcConfiguration.value.iceTransportPolicy !== 'relay') {
+            console.log('[AudioFix] Switching to TURN-only configuration');
+            rtcConfiguration.value = turnOnlyRtcConfiguration;
+            
+            // إشعار الطرف الآخر بتغيير التكوين
+            if (globalPartnerId.value) {
+              socket.value?.emit('ice-config-change', {
+                to: globalPartnerId.value,
+                config: 'turn-only'
+              });
+            }
+            
+            // قد نحتاج لإعادة تأسيس الاتصال
+            return true;
+          }
+        }
+      })
+      .catch(err => console.error('[AudioFix] Error getting connection stats:', err));
     
-    // إعادة فحص الحالة بعد فترة للتأكد من استقرارها
-    setTimeout(checkAndFixTracks, 3000);
-    
-    return true;
+    return hasFixedLocalTracks;
   }
   
   // استعادة الاتصال بعد انقطاع
@@ -1759,26 +1876,28 @@ export function useWebRTC() {
     updateDebugInfo();
   });
   
-  // دالة لمراقبة جودة الاتصال
+  /**
+   * Function to improve connection reliability by monitoring and fixing issues
+   */
   function startConnectionMonitoring() {
     if (connectionMonitorInterval) {
       clearInterval(connectionMonitorInterval);
     }
     
-    // تتبع مرشحات ICE المحلية والبعيدة للتشخيص
+    // Track ICE candidates for diagnostics
     if (typeof window !== 'undefined') {
       (window as any).__localIceCandidates = [];
       (window as any).__remoteIceCandidates = [];
       (window as any).__iceCandidatePairs = [];
     }
     
-    // إضافة مستمع لمرشحات ICE المحلية
+    // Add listener for local ICE candidates
     if (globalPeerConnection) {
       globalPeerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           if (DEBUG) console.log('[WebRTC] ICE candidate generated:', event.candidate.candidate);
           
-          // حفظ المرشح للتشخيص
+          // Save candidate for diagnostics
           if (typeof window !== 'undefined') {
             (window as any).__localIceCandidates = (window as any).__localIceCandidates || [];
             (window as any).__localIceCandidates.push({
@@ -1787,37 +1906,37 @@ export function useWebRTC() {
             });
           }
           
-          // إرسال المرشح للطرف الآخر
-          if (socket.value && partnerId.value) {
-            if (DEBUG) console.log('[WebRTC] Sending ICE candidate to partner');
+          // Send candidate to peer
+          if (socket.value && globalPartnerId.value) {
             socket.value.emit('ice-candidate', {
               candidate: event.candidate,
-              to: partnerId.value
+              to: globalPartnerId.value
             });
           }
         }
       };
     }
     
-    connectionMonitorInterval = window.setInterval(async () => {
-      if (!globalPeerConnection || globalConnectionState.value !== 'connecting' && globalConnectionState.value !== 'connected') {
+    connectionMonitorInterval = window.setInterval(() => {
+      if (!globalPeerConnection || 
+          (globalConnectionState.value !== 'connecting' && 
+           globalConnectionState.value !== 'connected')) {
         stopConnectionMonitoring();
         return;
       }
       
       try {
-        // جمع إحصائيات الاتصال
-        const stats = await getConnectionStats();
+        // Run our combined diagnostics and fix function
+        diagnoseAndFixConnection();
         
-        // تتبع أزواج المرشحات ICE
-        if (stats && stats.iceCandidatePairs) {
-          if (typeof window !== 'undefined') {
-            (window as any).__iceCandidatePairs = stats.iceCandidatePairs;
+        // Collect stats for monitoring
+        getConnectionStats().then(stats => {
+          if (stats && stats.iceCandidatePairs) {
+            if (typeof window !== 'undefined') {
+              (window as any).__iceCandidatePairs = stats.iceCandidatePairs;
+            }
           }
-        }
-        
-        // تحقق من جودة الاتصال
-        checkConnectionHealth(stats);
+        });
       } catch (error) {
         console.error('[WebRTC] Error monitoring connection:', error);
       }
@@ -1926,23 +2045,25 @@ export function useWebRTC() {
     }, quickTimeout);
   }
   
-  // دالة للحصول على تقرير تشخيصي شامل
+  /**
+   * @returns Diagnostic report with connection info
+   */
   function getConnectionDiagnosticReport(): string {
     const peerConn = globalPeerConnection;
     const report = [];
     
-    report.push(`Connection State: ${peerConn?.connectionState || 'none'}`);
-    report.push(`Signaling State: ${peerConn?.signalingState || 'none'}`);
-    report.push(`ICE Connection State: ${peerConn?.iceConnectionState || 'none'}`);
-    report.push(`ICE Gathering State: ${peerConn?.iceGatheringState || 'none'}`);
-    report.push(`Reconnection Attempts: ${connectionRetryCount}/${MAX_CONNECTION_RETRIES}`);
-    report.push(`Last Error: ${lastConnectionError || 'none'}`);
-    report.push(`Local Audio Tracks: ${globalLocalStream?.getAudioTracks().length || 0}`);
-    report.push(`Remote Audio Tracks: ${globalRemoteStream?.getAudioTracks().length || 0}`);
-    report.push(`Local Candidates: ${(window as any).__localIceCandidates?.length || 0}`);
-    report.push(`Remote Candidates: ${(window as any).__remoteIceCandidates?.length || 0}`);
-    report.push(`Is Negotiating: ${isNegotiating}`);
-    report.push(`Is Restarting ICE: ${isRestartingIce}`);
+    report.push(`حالة الاتصال: ${peerConn?.connectionState || 'غير متصل'}`);
+    report.push(`حالة الإشارة: ${peerConn?.signalingState || 'غير متصل'}`);
+    report.push(`حالة اتصال ICE: ${peerConn?.iceConnectionState || 'غير متصل'}`);
+    report.push(`حالة تجميع ICE: ${peerConn?.iceGatheringState || 'غير متصل'}`);
+    report.push(`محاولات إعادة الاتصال: ${connectionRetryCount}/${MAX_CONNECTION_RETRIES}`);
+    report.push(`آخر خطأ: ${lastConnectionError || failureReason || 'لا يوجد'}`);
+    report.push(`مسارات الصوت المحلية: ${globalLocalStream?.getAudioTracks().length || 0}`);
+    report.push(`مسارات الصوت البعيدة: ${globalRemoteStream?.getAudioTracks().length || 0}`);
+    report.push(`مرشحات ICE المحلية: ${(window as any).__localIceCandidates?.length || 0}`);
+    report.push(`مرشحات ICE البعيدة: ${(window as any).__remoteIceCandidates?.length || 0}`);
+    report.push(`جاري التفاوض: ${isNegotiating}`);
+    report.push(`جاري إعادة تشغيل ICE: ${isRestartingIce}`);
     
     return report.join('\n');
   }
@@ -2077,6 +2198,273 @@ export function useWebRTC() {
     }
   };
   
+  /**
+   * Enhanced function to restore microphone state properly
+   */
+  const restoreMicrophoneState = async (): Promise<void> => {
+    if (!globalLocalStream) {
+      if (DEBUG) console.log('[WebRTC] No local stream to restore microphone state on');
+      return;
+    }
+
+    const { getSavedMicrophoneState } = useMicrophoneState();
+    const savedMuteState = getSavedMicrophoneState();
+    
+    if (savedMuteState === null) {
+      if (DEBUG) console.log('[WebRTC] No saved microphone state found');
+      return;
+    }
+    
+    if (DEBUG) console.log(`[WebRTC] Restoring saved microphone state: ${savedMuteState ? 'muted' : 'unmuted'}`);
+    
+    // Directly apply mute state to all audio tracks
+    if (globalLocalStream && globalLocalStream.getAudioTracks().length > 0) {
+      globalLocalStream.getAudioTracks().forEach(track => {
+        if (DEBUG) console.log(`[WebRTC] Setting track '${track.label}' enabled = ${!savedMuteState}`);
+        track.enabled = !savedMuteState;
+      });
+      
+      // Update global state
+      globalIsAudioMuted.value = savedMuteState;
+      
+      // Dispatch event to update UI
+      window.dispatchEvent(new CustomEvent('microphone-state-changed', { 
+        detail: { isMuted: savedMuteState } 
+      }));
+    }
+  };
+  
+  /**
+   * Initialize stream and restore mic state after creating peer connection
+   */
+  const initializeConnection = async (partnerId: string | null = null): Promise<void> => {
+    console.log(`[WebRTC] Initializing connection with partner ${partnerId || 'unknown'}`);
+    
+    try {
+      // تهيئة وضبط المتغيرات العالمية
+      globalPartnerId.value = partnerId;
+      reconnectionAttempts = 0; // إعادة ضبط عدد محاولات إعادة الاتصال
+      
+      // 1. إنشاء تدفق الصوت المحلي إذا لم يكن موجودًا
+      if (!globalLocalStream) {
+    await initializeLocalStream();
+      }
+      
+      // 2. استعادة حالة الميكروفون (كتم/تشغيل)
+    await restoreMicrophoneState();
+      
+      // 3. إنهاء أي اتصال قائم
+      if (globalPeerConnection) {
+        closeConnection();
+      }
+      
+      // 4. إنشاء اتصال نظير جديد
+    createPeerConnection();
+      
+      // 5. بدء مراقبة الاتصال
+      startConnectionMonitoring();
+      
+      // 6. تعيين مهلة للاتصال
+      if (globalPeerConnection) {
+        setupConnectionTimeout(globalPeerConnection);
+      }
+      
+      // 7. إعلام الطرف الآخر بالاستعداد للمكالمة إذا تم تحديد معرف الشريك
+    if (partnerId) {
+        socket.value?.emit('ready-for-call', { to: partnerId });
+      }
+      
+      console.log('[WebRTC] Connection initialized successfully');
+    } catch (error) {
+      console.error('[WebRTC] Failed to initialize connection:', error);
+      
+      // محاولة تشخيص وإصلاح المشاكل
+      diagnoseAndFixConnection();
+      
+      // إعادة رفع الخطأ للتعامل معه في المستوى الأعلى
+      throw error;
+    }
+  };
+  
+  /**
+   * Improve handling of automatic reconnection for WebRTC
+   */
+  function attemptReconnection(partnerId: string | null) {
+    // قطع الاتصال الحالي قبل محاولة إعادة الاتصال
+    closeConnection();
+    
+    // زيادة عدد محاولات إعادة الاتصال
+    reconnectionAttempts++;
+    
+    // حساب التأخير باستخدام التأخير التصاعدي (exponential backoff) 
+    // للحد الأدنى 1 ثانية والحد الأقصى 30 ثانية
+    const delay = Math.min(
+      INITIAL_RECONNECTION_DELAY * Math.pow(1.5, reconnectionAttempts - 1),
+      30000
+    );
+    
+    console.log(`[WebRTC] Attempting reconnection ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS} after ${delay}ms`);
+    
+    // إلغاء أي مؤقت سابق
+    cleanupReconnectionTimer();
+    
+    // إعادة الاتصال بعد التأخير
+    reconnectionTimer = window.setTimeout(async () => {
+      reconnectionTimer = null;
+      
+      if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
+        console.log(`[WebRTC] Reached maximum reconnection attempts (${MAX_RECONNECTION_ATTEMPTS})`);
+        updateGlobalState('failed');
+        // إعلام المستخدم بالفشل النهائي
+        socket.value?.emit('webrtc-connection-state', {
+          state: 'failed',
+          to: partnerId,
+          details: { attempts: reconnectionAttempts }
+        });
+        
+        // اتخاذ إجراء آخر - مثل الرجوع إلى قائمة الانتظار
+        socket.value?.emit('return-to-queue', { reason: 'connection-failed' });
+        return;
+      }
+      
+      // محاولة إعادة الاتصال
+      try {
+        // بدء التفاوض من جديد
+        await initializeConnection(partnerId);
+        
+        if (partnerId) {
+          // إعلام الطرف الآخر بمحاولة إعادة الاتصال
+          socket.value?.emit('webrtc-reconnect', { 
+            to: partnerId,
+            details: { attempts: reconnectionAttempts }
+          });
+          
+          // بدء التفاوض من جديد
+          startNegotiation();
+        }
+      } catch (error) {
+        console.error('[WebRTC] Reconnection attempt failed:', error);
+        
+        // محاولة إعادة الاتصال مرة أخرى إذا لم نصل للحد الأقصى
+        if (reconnectionAttempts < MAX_RECONNECTION_ATTEMPTS) {
+          attemptReconnection(partnerId);
+        } else {
+          updateGlobalState('failed');
+        }
+      }
+    }, delay);
+  }
+  
+  /**
+   * Clean up reconnection timer
+   */
+  function cleanupReconnectionTimer() {
+    if (reconnectionTimer !== null) {
+      clearTimeout(reconnectionTimer);
+      reconnectionTimer = null;
+    }
+  }
+  
+  /**
+   * Comprehensive diagnosis and fixing of WebRTC connection issues
+   */
+  function diagnoseAndFixConnection(): boolean {
+    if (DEBUG) console.log('[WebRTC] 🔍 Diagnosing connection issues');
+    
+    if (!globalPeerConnection) {
+      console.log('[WebRTC] 🔴 No connection exists');
+      return false;
+    }
+    
+    // Log connection states
+    if (DEBUG) {
+      console.log(`[WebRTC] Connection state: ${globalPeerConnection.connectionState}`);
+      console.log(`[WebRTC] ICE connection state: ${globalPeerConnection.iceConnectionState}`);
+      console.log(`[WebRTC] Signaling state: ${globalPeerConnection.signalingState}`);
+    }
+    
+    // Check local stream
+    if (!globalLocalStream || globalLocalStream.getAudioTracks().length === 0) {
+      console.log('[WebRTC] 🔴 No local audio stream');
+      
+      // Try to recover local stream
+      try {
+        initializeLocalStream().catch((e: Error) => console.error('[WebRTC] Failed to reinitialize local stream:', e));
+      } catch (e) {
+        console.error('[WebRTC] Error initializing stream:', e);
+      }
+      return false;
+    }
+    
+    // Check remote stream and fix if needed
+    if (!globalRemoteStream || globalRemoteStream.getAudioTracks().length === 0) {
+      console.log('[WebRTC] 🔴 No remote audio stream');
+      
+      // Fix remote stream by adding tracks from receivers
+      const receivers = globalPeerConnection.getReceivers();
+      const audioReceivers = receivers.filter(r => r.track && r.track.kind === 'audio');
+      
+      if (audioReceivers.length > 0) {
+        if (!globalRemoteStream) globalRemoteStream = new MediaStream();
+        
+        audioReceivers.forEach(receiver => {
+          if (receiver.track) {
+            console.log('[WebRTC] Adding track from receiver to remote stream:', receiver.track.id);
+            globalRemoteStream!.addTrack(receiver.track);
+          }
+        });
+        
+        // Update ref for components
+        remoteStream.value = globalRemoteStream;
+      }
+      
+      // If still no remote tracks, request renegotiation
+      if (!globalRemoteStream || globalRemoteStream.getAudioTracks().length === 0) {
+        if (!isNegotiating && globalPartnerId.value) {
+          startNegotiation();
+        }
+        return false;
+      }
+    }
+    
+    // Ensure audio elements use the remote stream
+    setTimeout(() => {
+      const audioElements = document.querySelectorAll('audio');
+      if (audioElements.length > 0 && globalRemoteStream) {
+        console.log(`[WebRTC] Found ${audioElements.length} audio elements, ensuring they use remote stream`);
+        Array.from(audioElements).forEach((audioEl, i) => {
+          if (audioEl.srcObject !== globalRemoteStream) {
+            console.log(`[WebRTC] Audio element ${i} not using correct stream, updating`);
+            audioEl.srcObject = globalRemoteStream;
+            audioEl.muted = false;
+            audioEl.volume = 1.0;
+            
+            // Try to play audio
+            audioEl.play().catch(e => console.log('[WebRTC] Error playing audio:', e));
+          }
+        });
+      }
+    }, 100);
+    
+    // Check all tracks are enabled
+    const allTracksEnabled = [...(globalLocalStream?.getTracks() || []), ...(globalRemoteStream?.getTracks() || [])]
+      .every(track => track.kind !== 'audio' || (track.kind === 'audio' && track.enabled));
+    
+    if (!allTracksEnabled) {
+      console.log('[WebRTC] 🟠 Found disabled tracks, enabling them');
+      
+      // Enable all audio tracks except if user explicitly muted
+      globalRemoteStream?.getAudioTracks().forEach(track => { track.enabled = true; });
+      
+      if (!globalIsAudioMuted.value) {
+        globalLocalStream?.getAudioTracks().forEach(track => { track.enabled = true; });
+      }
+    }
+    
+    return true;
+  }
+  
+  // Export the API
   return {
     socket,
     peerConnection,
@@ -2093,7 +2481,12 @@ export function useWebRTC() {
     closeConnection,
     initializeLocalStream,
     cleanup,
-    diagnosticReport
+    diagnosticReport,
+    restoreMicrophoneState,
+    initializeConnection,
+    diagnoseAndFixConnection,
+    startNegotiation,
+    attemptReconnection
   };
 }
 
@@ -2102,7 +2495,7 @@ function isSignalingStateStable(pc: RTCPeerConnection): boolean {
   return pc.signalingState === 'stable';
 }
 
-// إضافة دالة للتحقق من إمكانية تعيين الوصف المحلي
+// التحقق من إمكانية تعيين الوصف المحلي
 function canSetLocalDescription(pc: RTCPeerConnection): boolean {
   return pc.signalingState === 'stable' || pc.signalingState === 'have-remote-offer';
 }

@@ -255,6 +255,21 @@ onMounted(() => {
   }).catch((error) => {
     console.error('[ConnectionInterface] Failed to initialize audio:', error);
   });
+
+  // Add listener for connection-closed custom event
+  window.addEventListener('connection-closed', () => {
+    if (DEBUG) console.log('[ConnectionInterface] Received connection-closed event');
+    
+    // Don't immediately change state to idle in case HomeView is showing disconnecting state
+    // Wait for partner status to be cleared by parent component
+    if (partnerId.value) {
+      // Update local state to reflect disconnection
+      callActive.value = false;
+      
+      // The parent component (HomeView) will handle setting status to disconnecting/disconnected
+      if (DEBUG) console.log('[ConnectionInterface] Connection closed, status handled by parent');
+    }
+  });
 });
 
 // Clean up
@@ -276,16 +291,21 @@ onBeforeUnmount(() => {
   // Clean up WebRTC connection
   closeConnection();
   
-  // Clean up socket listeners
+  // Remove custom event listeners
+  window.removeEventListener('connection-closed', () => {});
+  
+  // Remove socket event listeners if socket exists
   if (socket.value) {
     socket.value.off('matched');
-    socket.value.off('direct-connection-established');
-    socket.value.off('direct-connection-failed');
-    socket.value.off('partner-disconnected');
+    socket.value.off('user-skipped');
+    socket.value.off('user-disconnected');
+    socket.value.off('skip-confirmed');
+    socket.value.off('disconnect-confirmed');
     socket.value.off('already-matched');
-    socket.value.off('error');
+    socket.value.off('queue-timeout');
+    socket.value.off('queue-waiting');
   }
-
+  
   // Stop connection timer
   stopConnectionTimer();
   stopStatsCollection();
@@ -322,40 +342,47 @@ function setupSocketListeners() {
     callActive.value = false;
   });
   
-  // Handle partner disconnected event
-  socket.value.on('partner-disconnected', () => {
-    if (DEBUG) console.log('[ConnectionInterface] Partner disconnected');
-    status.value = 'idle';
-    partnerId.value = null;
-    callActive.value = false;
-    
-    // Clear search timeout if it exists
-    if (searchTimeout) {
-      clearTimeout(searchTimeout);
-      searchTimeout = null;
-    }
-    
-    // Auto-reconnect if enabled
-    if (autoReconnect.value) {
-      if (DEBUG) console.log('[ConnectionInterface] Will auto-reconnect in 2 seconds');
-      setTimeout(() => {
-        if (status.value === 'idle') {
-          findPartner();
-        }
-      }, 2000);
-    }
+  // Handle disconnect-confirmed event
+  socket.value.on('disconnect-confirmed', (data: any) => {
+    if (DEBUG) console.log('[ConnectionInterface] Disconnect confirmed by server', data);
   });
-
-  // Handle already-matched event
-  socket.value.on('already-matched', (data: { partnerId: string }) => {
-    if (DEBUG) console.log('[ConnectionInterface] Already matched with partner:', data.partnerId);
+  
+  // Handle skip-confirmed event
+  socket.value.on('skip-confirmed', (data: any) => {
+    if (DEBUG) console.log('[ConnectionInterface] Skip confirmed by server', data);
+    // Skip confirmed means we wanted to skip - no UI action needed since we already handled it
+  });
+  
+  // Handle when we get skipped by another user
+  socket.value.on('user-skipped', (data: any) => {
+    if (DEBUG) console.log('[ConnectionInterface] We got skipped by the other user', data);
     
-    // Update our state to reflect we are already connected
-    setupPartnerConnection(data.partnerId);
+    status.value = 'disconnecting';
     
-    // Set connection state to connected directly since we already have a connection
-    status.value = 'connected';
-    callActive.value = true;
+    // After 2 seconds, transition to idle
+    setTimeout(() => {
+      if (status.value === 'disconnecting') {
+        partnerId.value = null;
+        status.value = 'idle';
+        callActive.value = false;
+      }
+    }, 2000);
+  });
+  
+  // Handle when the other user disappears (browser close, etc.)
+  socket.value.on('user-disconnected', (data: any) => {
+    if (DEBUG) console.log('[ConnectionInterface] The other user disconnected', data);
+    
+    status.value = 'disconnecting';
+    
+    // After 2 seconds, transition to idle
+    setTimeout(() => {
+      if (status.value === 'disconnecting') {
+        partnerId.value = null;
+        status.value = 'idle';
+        callActive.value = false;
+      }
+    }, 2000);
   });
 }
 
@@ -488,12 +515,19 @@ function connectToHistoryUser(userId: string) {
 // Function to disconnect from current partner
 function disconnectPartner() {
   if (socket.value && partnerId.value) {
-    socket.value.emit('disconnect-partner');
-    status.value = 'idle';
+    // Emit disconnect event with 'skip' reason
+    socket.value.emit('disconnect-partner', { reason: 'skip' });
+    
+    // When user initiates skip, don't show disconnecting state
+    // instead go straight to idle to prepare for next connection
     partnerId.value = null;
+    status.value = 'idle';
     callActive.value = false;
-    closeConnection(); // Close WebRTC connection
-    if (DEBUG) console.log('[ConnectionInterface] Disconnected from partner');
+    
+    // Close WebRTC connection
+    closeConnection();
+    
+    if (DEBUG) console.log('[ConnectionInterface] Disconnected from partner via skip');
   }
 }
 
