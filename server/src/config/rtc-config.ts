@@ -2,27 +2,18 @@ import crypto from 'crypto';
 import axios from 'axios';
 
 // Dynamic TURN server credentials generation
-export function generateTurnCredentials(hmacKey = process.env.TURN_HMAC_KEY || 'default-hmac-key'): {
+export function generateTurnCredentials(): {
   username: string;
   credential: string;
   ttl: number;
   timestamp: number;
 } {
-  const ttl = 86400; // 24 hour validity
-  const timestamp = Math.floor(Date.now() / 1000) + ttl;
-  const username = `${timestamp}:spacechat`;
-
-  // Create HMAC for credential verification
-  const hmac = crypto
-    .createHmac('sha1', hmacKey)
-    .update(username)
-    .digest('base64');
-
+  // بيانات ثابتة لمشروع مفتوح (بدون HMAC)
   return {
-    username,
-    credential: hmac,
-    ttl,
-    timestamp
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+    ttl: 86400,
+    timestamp: Math.floor(Date.now() / 1000) + 86400
   };
 }
 
@@ -59,63 +50,36 @@ export async function getRtcConfiguration(): Promise<{
   };
 }> {
   const credentials = generateTurnCredentials();
-  let externalServers: any[] = [];
-  
-  // Try to fetch external TURN servers if available
-  try {
-    externalServers = await fetchExternalTurnServers();
-  } catch (error) {
-    console.warn('Using default TURN servers due to error fetching external servers');
-  }
-  
-  // Primary configuration - use environment variables if available
-  const turnUsername = process.env.TURN_USERNAME || credentials.username;
-  const turnCredential = process.env.TURN_CREDENTIAL || credentials.credential;
-  
-  // Get primary TURN server from environment or use default
-  const primaryTurnServer = process.env.PRIMARY_TURN_SERVER || 'global.relay.metered.ca';
-  
   // Base configuration
   const standardConfig: RTCConfiguration = {
     iceServers: [
-      // Primary TURN servers - reliable commercial service
+      // TURN/STUN مجانية وموثوقة
       {
         urls: [
-          `turns:${primaryTurnServer}:443`,
-          `turn:${primaryTurnServer}:443?transport=tcp`,
-          `turn:${primaryTurnServer}:80?transport=tcp`,
-          `turn:${primaryTurnServer}:80`
+          'stun:stun.l.google.com:19302',
+          'stun:stun1.l.google.com:19302',
+          'stun:stun2.l.google.com:19302',
+          'stun:stun3.l.google.com:19302',
+          'stun:stun4.l.google.com:19302',
+          'stun:stun.cloudflare.com:3478',
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turns:openrelay.metered.ca:443',
+          'turn:global.relay.metered.ca:80',
+          'turn:global.relay.metered.ca:443',
+          'turns:global.relay.metered.ca:443'
         ],
-        username: turnUsername,
-        credential: turnCredential
-      },
-      
-      // Add external servers if available
-      ...externalServers,
-      
-      // Backup TURN servers if primary fails
-      {
-        urls: [
-          'turns:global.turn.twilio.com:443?transport=tcp',
-          'turn:global.turn.twilio.com:3478?transport=udp'
-        ],
-        username: process.env.TWILIO_TURN_USERNAME || 'openrelayproject',
-        credential: process.env.TWILIO_TURN_CREDENTIAL || 'openrelayproject'
-      },
-      
-      // Public STUN servers (no auth needed)
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' }
+        username: credentials.username,
+        credential: credentials.credential
+      }
     ],
     iceCandidatePoolSize: 10,
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
   };
-
   return {
     rtcConfig: standardConfig,
     credentials
   };
-} 
+}
