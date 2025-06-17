@@ -309,7 +309,7 @@ export function createServer(config: ServerConfig = {}) {
 
 // تشغيل السيرفر الرئيسي عندما يتم تشغيل هذا الملف مباشرة
 if (require.main === module) {
-  const PORT = 3000;
+  const PORT = 8080;
   // إنشاء وتشغيل السيرفر
   const { server } = createServer();
   server.listen(PORT, () => {
