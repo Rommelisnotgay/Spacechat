@@ -17,17 +17,9 @@ const gameService_1 = require("./services/gameService");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 // الحصول على أصول CORS المسموح بها
-const getAllowedOrigins = () => [
-    'https://spacechat-live.up.railway.app',
-    'https://spacechat-live.railway.app',
-    'https://spacechat.live',
-    'https://www.spacechat.live',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'https://web-production-33e9dc.up.railway.app'
-];
+const getAllowedOrigins = () => {
+    return '*'; // السماح لأي origin بالوصول
+};
 // دالة إنشاء وإرجاع السيرفر لاستخدامه في وضع العنقود
 function createServer(config = {}) {
     // تهيئة تطبيق Express مع إعدادات محسنة
@@ -44,7 +36,7 @@ function createServer(config = {}) {
     // خيارات Socket.IO الأساسية
     const socketOptions = {
         cors: {
-            origin: getAllowedOrigins(),
+            origin: '*', // السماح لأي origin بالوصول
             methods: ['GET', 'POST'],
             credentials: true
         },
@@ -66,7 +58,7 @@ function createServer(config = {}) {
     gameService_1.gameService.setSocketServer(io);
     // الوسائط
     app.use((0, cors_1.default)({
-        origin: getAllowedOrigins(),
+        origin: '*', // السماح لأي origin بالوصول
         credentials: true
     }));
     // زيادة حد محلل الجسم
@@ -274,7 +266,7 @@ function createServer(config = {}) {
 }
 // تشغيل السيرفر الرئيسي عندما يتم تشغيل هذا الملف مباشرة
 if (require.main === module) {
-    const PORT = 8080;
+    const PORT = process.env.PORT || 8080;
     // إنشاء وتشغيل السيرفر
     const { server } = createServer();
     server.listen(PORT, () => {

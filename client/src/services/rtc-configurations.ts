@@ -98,35 +98,37 @@ export async function fetchTurnCredentials(): Promise<RTCConfiguration | null> {
 // تحديث الإعداد القياسي باستخدام خوادم TURN المقدمة من المستخدم
 export const standardRtcConfiguration: RTCConfiguration = {
   iceServers: [
-    // STUN server
-    {
-      urls: "stun:stun.relay.metered.ca:80",
-    },
-    // TURN servers with the provided credentials
-    {
-      urls: "turn:global.relay.metered.ca:80",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    {
-      urls: "turn:global.relay.metered.ca:80?transport=tcp",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    {
-      urls: "turn:global.relay.metered.ca:443",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    {
-      urls: "turns:global.relay.metered.ca:443?transport=tcp",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    // إضافة خوادم STUN أساسية للدعم الإضافي
+    // STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    
+    // OpenRelay TURN servers 
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp',
+        'turns:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    
+    // Metered TURN servers with the provided credentials
+    {
+      urls: [
+        'turn:global.relay.metered.ca:80',
+        'turn:global.relay.metered.ca:80?transport=tcp',
+        'turn:global.relay.metered.ca:443',
+        'turn:global.relay.metered.ca:443?transport=tcp',
+        'turns:global.relay.metered.ca:443',
+        'turns:global.relay.metered.ca:443?transport=tcp'
+      ],
+      username: METERED_TURN_USERNAME,
+      credential: METERED_TURN_CREDENTIAL
+    }
   ],
   iceCandidatePoolSize: 15,
   iceTransportPolicy: 'all',
@@ -137,26 +139,24 @@ export const standardRtcConfiguration: RTCConfiguration = {
 // TURN-only configuration for difficult networks and restrictive firewalls
 export const turnOnlyRtcConfiguration: RTCConfiguration = {
   iceServers: [
-    // TURN servers with the provided credentials
+    // OpenRelay TURN servers
     {
-      urls: "turn:global.relay.metered.ca:80",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
+      urls: [
+        'turn:openrelay.metered.ca:443?transport=tcp',
+        'turns:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
     },
+    
+    // Metered TURN servers with the provided credentials
     {
-      urls: "turn:global.relay.metered.ca:80?transport=tcp",
+      urls: [
+        'turn:global.relay.metered.ca:443?transport=tcp',
+        'turns:global.relay.metered.ca:443?transport=tcp'
+      ],
       username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    {
-      urls: "turn:global.relay.metered.ca:443",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
-    },
-    {
-      urls: "turns:global.relay.metered.ca:443?transport=tcp",
-      username: METERED_TURN_USERNAME,
-      credential: METERED_TURN_CREDENTIAL,
+      credential: METERED_TURN_CREDENTIAL
     }
   ],
   iceCandidatePoolSize: 15,

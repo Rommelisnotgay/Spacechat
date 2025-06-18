@@ -284,6 +284,46 @@ function diagnoseConnectionIssues(): string {
 }
 
 /**
+ * التحقق من وجود مرشحات ICE من النوع relay (TURN)
+ * هذا مهم للتأكد من أن اتصالات TURN تعمل بشكل صحيح
+ * @param pc كائن RTCPeerConnection للتحقق منه
+ */
+async function checkForTurnCandidates(pc: RTCPeerConnection): Promise<boolean> {
+  if (!pc) return false;
+  
+  try {
+    // الحصول على إحصائيات الاتصال
+    const stats = await pc.getStats();
+    let hasRelayCandidate = false;
+    
+    // البحث عن مرشحات من النوع relay
+    stats.forEach(stat => {
+      if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') {
+        if (stat.candidateType === 'relay') {
+          console.log(`[WebRTC] ✅ Found ${stat.type} relay candidate:`, stat);
+          hasRelayCandidate = true;
+        } else if (DEBUG) {
+          console.log(`[WebRTC] Found ${stat.type} ${stat.candidateType} candidate:`, stat);
+        }
+      }
+    });
+    
+    // إعلام المستخدم إذا لم تكن هناك مرشحات relay
+    if (!hasRelayCandidate) {
+      console.warn('[WebRTC] ⚠️ No relay candidates found. TURN servers may not be working properly.');
+      console.log('[WebRTC] 🔍 ICE Servers configuration:', rtcConfiguration.value.iceServers);
+    } else {
+      console.log('[WebRTC] ✅ TURN servers are working properly.');
+    }
+    
+    return hasRelayCandidate;
+  } catch (error) {
+    console.error('[WebRTC] Error checking for relay candidates:', error);
+    return false;
+  }
+}
+
+/**
  * WebRTC service for audio calls
  */
 export function useWebRTC(): WebRTCHook {
@@ -504,6 +544,30 @@ export function useWebRTC(): WebRTCHook {
       // ICE gathering state change
       pc.onicegatheringstatechange = () => {
         if (DEBUG) console.log('[WebRTC] ICE gathering state changed to:', pc.iceGatheringState);
+        
+        // التحقق من مرشحات TURN عند اكتمال جمع المرشحات
+        if (pc.iceGatheringState === 'complete') {
+          setTimeout(async () => {
+            const hasTurnCandidates = await checkForTurnCandidates(pc);
+            
+            // إذا لم يتم العثور على مرشحات TURN، قم بتغيير التكوين وإعادة المحاولة
+            if (!hasTurnCandidates && rtcConfiguration.value !== turnOnlyRtcConfiguration && connectionRetryCount > 1) {
+              console.log('[WebRTC] 🔄 No TURN candidates found, switching to TURN-only configuration');
+              rtcConfiguration.value = turnOnlyRtcConfiguration;
+              
+              // حاول إعادة الاتصال إذا كان لدينا هوية الشريك
+              if (globalPartnerId.value) {
+                setTimeout(() => {
+                  if (globalPeerConnection?.connectionState !== 'connected') {
+                    console.log('[WebRTC] 🔄 Reconnecting with TURN-only configuration');
+                    closeConnection();
+                    initializeConnection(globalPartnerId.value).then(startNegotiation);
+                  }
+                }, 2000);
+              }
+            }
+          }, 1000);
+        }
       };
       
       // Connection state change (modern browsers only)
@@ -2381,6 +2445,38 @@ export function useWebRTC(): WebRTCHook {
       console.log(`[WebRTC] Connection state: ${globalPeerConnection.connectionState}`);
       console.log(`[WebRTC] ICE connection state: ${globalPeerConnection.iceConnectionState}`);
       console.log(`[WebRTC] Signaling state: ${globalPeerConnection.signalingState}`);
+    }
+    
+    // تحويل الاتصال إلى وضع TURN-only إذا كان يواجه مشاكل
+    if ((globalPeerConnection.iceConnectionState === 'checking' && connectionRetryCount > 3) || 
+        globalPeerConnection.iceConnectionState === 'failed' || 
+        globalConnectionState.value === 'failed' ||
+        (connectionRetryCount > 3 && globalPeerConnection.connectionState !== 'connected')) {
+      
+      console.log('[WebRTC] 🔄 Switching to TURN-only mode for better connectivity');
+      
+      // استخدام إعدادات TURN-only
+      rtcConfiguration.value = turnOnlyRtcConfiguration;
+      
+      // إعادة ضبط الاتصال
+      closeConnection();
+      
+      // محاولة إعادة الاتصال بإعدادات TURN-only
+      if (globalPartnerId.value) {
+        console.log('[WebRTC] 🔄 Attempting reconnection with TURN-only mode');
+        setTimeout(() => {
+          initializeConnection(globalPartnerId.value)
+            .then(() => {
+              console.log('[WebRTC] 🟢 Reconnected with TURN-only mode');
+              startNegotiation();
+            })
+            .catch(err => {
+              console.error('[WebRTC] 🔴 Failed to reconnect with TURN-only mode:', err);
+            });
+        }, 1000);
+      }
+      
+      return true;
     }
     
     // Check local stream
