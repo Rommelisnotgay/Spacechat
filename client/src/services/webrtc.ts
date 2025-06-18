@@ -92,6 +92,7 @@ const INITIAL_RECONNECTION_DELAY = 1000; // 1 second
 let lastConnectionRequiredTurn = localStorage.getItem('last_conn_required_turn') === 'true';
 let networkTypeChecked = false;
 let isLikelyDifferentNetwork = false;
+let lastNegotiationTime = 0; // تتبع وقت آخر عملية تفاوض
 
 // Define interface for the return type of useWebRTC
 interface WebRTCHook {
@@ -1049,18 +1050,45 @@ export function useWebRTC(): WebRTCHook {
         // إذا كنا في حالة مستقرة، قد نكون عالجنا هذه الإجابة بالفعل أو فاتنا العرض
         if (currentState === 'stable') {
           if (DEBUG) console.log('[WebRTC] Already in stable state, ignoring answer');
+          
+          // في حالة الشبكات المختلفة، قد تكون هذه علامة على مشكلة في التزامن
+          // محاولة إعادة التفاوض بعد تأخير قصير
+          if (isLikelyDifferentNetwork || lastConnectionRequiredTurn) {
+            console.log('[WebRTC] In stable state but received answer - possible race condition on different networks');
+            
+            // إذا لم يكن الاتصال مستقرًا بعد، نحاول إعادة التفاوض
+            if (globalConnectionState.value !== 'connected' && globalPeerConnection?.connectionState !== 'connected') {
+              console.log('[WebRTC] Connection not established yet, initiating new negotiation');
+              
+              // تأخير قصير قبل إعادة التفاوض
+              setTimeout(() => {
+                if (partnerId.value) {
+                  // إعادة التفاوض باستخدام تكوين TURN فقط
+                  rtcConfiguration.value = turnOnlyRtcConfiguration;
+                  startNegotiation();
+                }
+              }, 1500);
+            }
+          }
         } else if (currentState === 'have-remote-offer') {
           console.warn('[WebRTC] We have a remote offer but received an answer - signaling confusion');
           // يمكن إعادة تعيين الاتصال لتصحيح تسلسل الإشارات
           if (connectionRetryCount < MAX_CONNECTION_RETRIES) {
             connectionRetryCount++;
             if (DEBUG) console.log(`[WebRTC] Resetting connection due to signaling confusion (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
+            
+            // التبديل إلى وضع TURN فقط للتغلب على مشاكل NAT
+            rtcConfiguration.value = turnOnlyRtcConfiguration;
+            
+            // إغلاق الاتصال الحالي
             closeConnection();
             
             // إعادة إنشاء اتصال جديد بعد فترة قصيرة
             setTimeout(() => {
               if (partnerId.value) {
-                createOffer(partnerId.value);
+                initializeConnection(partnerId.value).then(() => {
+                  createOffer(partnerId.value);
+                });
               }
             }, 2000);
           }
@@ -2233,46 +2261,120 @@ export function useWebRTC(): WebRTCHook {
   // تم حذف التعريفات المكررة
   
   /**
-   * بدء تفاوض جديد على الاتصال WebRTC
+   * بدء تفاوض جديد على الاتصال WebRTC مع تحسينات للتعامل مع حالات التزامن
    */
   function startNegotiation(): void {
-    if (!globalPeerConnection || !partnerId.value || isNegotiating) {
-      if (DEBUG) console.log('[WebRTC] Cannot start negotiation: missing connection, partner ID, or already negotiating');
+    if (!globalPeerConnection || !partnerId.value) {
+      if (DEBUG) console.log('[WebRTC] Cannot start negotiation: missing connection or partner ID');
       return;
+    }
+    
+    // إذا كان التفاوض جاريًا، نتحقق من المدة التي مرت
+    if (isNegotiating) {
+      // إذا كان التفاوض مستمرًا لفترة طويلة، نفترض أنه قد تعطل ونعيد ضبطه
+      if (Date.now() - lastNegotiationTime > 10000) { // 10 ثواني
+        console.log('[WebRTC] Negotiation seems stuck, resetting negotiation state');
+        isNegotiating = false;
+      } else {
+        if (DEBUG) console.log('[WebRTC] Already negotiating, skipping new negotiation');
+        return;
+      }
     }
     
     if (DEBUG) console.log('[WebRTC] Starting new negotiation');
     isNegotiating = true;
+    lastNegotiationTime = Date.now();
+    
+    // التحقق من حالة الإشارة قبل البدء
+    const signalingState = globalPeerConnection.signalingState;
+    if (signalingState !== 'stable' && signalingState !== 'have-local-offer') {
+      console.log(`[WebRTC] Waiting for signaling state to stabilize. Current state: ${signalingState}`);
+      
+      // انتظار حتى تستقر حالة الإشارة
+      setTimeout(() => {
+        if (globalPeerConnection && (globalPeerConnection.signalingState === 'stable' || 
+            globalPeerConnection.signalingState === 'have-local-offer')) {
+          console.log('[WebRTC] Signaling state now stable, proceeding with negotiation');
+          startNegotiation();
+        } else {
+          console.log('[WebRTC] Signaling state still not stable, resetting connection');
+          isNegotiating = false;
+          
+          // إعادة تكوين الاتصال بالكامل
+          if (partnerId.value) {
+            closeConnection();
+            setTimeout(() => {
+              initializeConnection(partnerId.value);
+            }, 1000);
+          }
+        }
+      }, 2000);
+      
+      return;
+    }
     
     try {
+      // استخدام TURN-only للشبكات المختلفة
+      if (isLikelyDifferentNetwork || lastConnectionRequiredTurn) {
+        console.log('[WebRTC] Using TURN-only configuration for negotiation');
+        rtcConfiguration.value = turnOnlyRtcConfiguration;
+      }
+      
       // بدء تفاوض جديد بإنشاء عرض
       globalPeerConnection.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false,
+        iceRestart: isRestartingIce // إعادة تشغيل ICE إذا كنا في وضع إعادة التشغيل
       })
       .then(offer => {
         if (!globalPeerConnection) return;
+        
+        // تسجيل SDP للتشخيص
+        if (DEBUG) console.log('[WebRTC] Local offer SDP:', offer.sdp);
+        
         return globalPeerConnection.setLocalDescription(offer);
       })
       .then(() => {
         if (!globalPeerConnection || !socket.value || !partnerId.value) return;
         
-        // إرسال العرض الجديد
+        // إرسال العرض الجديد عبر قناتين للتأكد من وصوله
         socket.value.emit('voice-offer', {
           offer: globalPeerConnection.localDescription,
           to: partnerId.value
         });
         
-        if (DEBUG) console.log('[WebRTC] Sent renegotiation offer');
+        // إرسال بتنسيق بديل أيضًا
+        socket.value.emit('webrtc-signal', {
+          type: 'offer',
+          offer: globalPeerConnection.localDescription,
+          to: partnerId.value
+        });
+        
+        if (DEBUG) console.log('[WebRTC] Sent negotiation offer');
+        
+        // بدء مراقبة الاتصال
+        startConnectionMonitoring();
       })
       .catch(error => {
         console.error('[WebRTC] Error during negotiation:', error);
+        
+        // محاولة إصلاح الخطأ
+        if (error.toString().includes('InvalidStateError')) {
+          console.log('[WebRTC] Invalid state during negotiation, resetting connection');
+          
+          if (partnerId.value) {
+            closeConnection();
+            setTimeout(() => {
+              initializeConnection(partnerId.value);
+            }, 1500);
+          }
+        }
       })
       .finally(() => {
         // إعادة تعيين العلم بعد فترة
         setTimeout(() => {
           isNegotiating = false;
-        }, 2000);
+        }, 5000); // زيادة المهلة من 2000 إلى 5000 مللي ثانية
       });
     } catch (error) {
       console.error('[WebRTC] Failed to start negotiation:', error);
