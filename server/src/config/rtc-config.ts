@@ -50,10 +50,10 @@ export async function getRtcConfiguration(): Promise<{
   };
 }> {
   const credentials = generateTurnCredentials();
-  // Base configuration
+  // Base configuration - تكوين معزز للعمل عبر أي شبكات
   const standardConfig: RTCConfiguration = {
     iceServers: [
-      // TURN/STUN مجانية وموثوقة
+      // STUN servers - خوادم متنوعة من مصادر مختلفة لزيادة احتمالية الاتصال
       {
         urls: [
           'stun:stun.l.google.com:19302',
@@ -61,19 +61,29 @@ export async function getRtcConfiguration(): Promise<{
           'stun:stun2.l.google.com:19302',
           'stun:stun3.l.google.com:19302',
           'stun:stun4.l.google.com:19302',
-          'stun:stun.cloudflare.com:3478',
+          'stun:stun.cloudflare.com:3478'
+        ]
+      },
+      // TURN servers - اضافة نقاط نهاية متعددة لتفادي القيود الشبكية
+      {
+        urls: [
           'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:80?transport=tcp',
           'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
           'turns:openrelay.metered.ca:443',
+          'turns:openrelay.metered.ca:443?transport=tcp',
           'turn:global.relay.metered.ca:80',
+          'turn:global.relay.metered.ca:80?transport=tcp',
           'turn:global.relay.metered.ca:443',
-          'turns:global.relay.metered.ca:443'
+          'turns:global.relay.metered.ca:443',
+          'turns:global.relay.metered.ca:443?transport=tcp'
         ],
         username: credentials.username,
         credential: credentials.credential
       }
     ],
-    iceCandidatePoolSize: 10,
+    iceCandidatePoolSize: 15,
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'

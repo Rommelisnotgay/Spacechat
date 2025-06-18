@@ -139,47 +139,27 @@ export function createServer(config: ServerConfig = {}) {
         iceServers: [
           {
             urls: [
-              // STUN servers - for NAT traversal
               'stun:stun.l.google.com:19302',
               'stun:stun1.l.google.com:19302',
               'stun:stun2.l.google.com:19302',
-              'stun:stun.cloudflare.com:3478'
-            ]
-          },
-          // OpenRelay TURN servers (specific credentials for each service)
-          {
-            urls: [
+              'stun:stun3.l.google.com:19302',
+              'stun:stun4.l.google.com:19302',
+              'stun:stun.cloudflare.com:3478',
               'turn:openrelay.metered.ca:80',
               'turn:openrelay.metered.ca:443',
-              'turn:openrelay.metered.ca:443?transport=tcp',
               'turns:openrelay.metered.ca:443',
-              'turns:openrelay.metered.ca:443?transport=tcp'
-            ],
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: [
               'turn:global.relay.metered.ca:80',
-              'turn:global.relay.metered.ca:80?transport=tcp',
               'turn:global.relay.metered.ca:443',
-              'turn:global.relay.metered.ca:443?transport=tcp',
-              'turns:global.relay.metered.ca:443',
-              'turns:global.relay.metered.ca:443?transport=tcp'
+              'turns:global.relay.metered.ca:443'
             ],
             username: 'openrelayproject',
             credential: 'openrelayproject'
-          },
-          // Google's public STUN server as fallback
-          {
-            urls: 'stun:stun.l.google.com:19302'
           }
         ],
         iceCandidatePoolSize: 15,
-        iceTransportPolicy: 'all', // يمكن للعميل تغييرها إلى 'relay' للشبكات الصعبة
+        iceTransportPolicy: 'all',
         bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        sdpSemantics: 'unified-plan' // استخدام الخطة الموحدة
+        rtcpMuxPolicy: 'require'
       }
     });
   });
