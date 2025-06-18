@@ -55,5 +55,11 @@ ENV PORT=8080
 # Expose the port
 EXPOSE 8080
 
+# Expose WebRTC and TURN/STUN related ports (TCP/UDP)
+EXPOSE 80
+EXPOSE 443
+EXPOSE 3478
+EXPOSE 5349
+
 # Start the application with node directly instead of npm
-CMD ["node", "server/dist/index.js"] 
+CMD ["node", "server/dist/index.js"]
