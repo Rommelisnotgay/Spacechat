@@ -27,8 +27,8 @@ interface ConnectionPreferences {
   preferSameLanguage?: boolean;
 }
 
-// Initialize with standard config, but this will be replaced with server-provided config
-let currentRtcConfig: RTCConfiguration = standardRtcConfiguration;
+// Initialize with TURN-only config as default for better compatibility
+let currentRtcConfig: RTCConfiguration = turnOnlyRtcConfiguration;
 
 // Initialize rtcConfiguration as a ref to allow it to be updated dynamically
 const rtcConfiguration = ref<RTCConfiguration>(currentRtcConfig);
@@ -93,6 +93,9 @@ let lastConnectionRequiredTurn = localStorage.getItem('last_conn_required_turn')
 let networkTypeChecked = false;
 let isLikelyDifferentNetwork = false;
 let lastNegotiationTime = 0; // تتبع وقت آخر عملية تفاوض
+
+// إضافة متغير للتحكم في آلية polite/impolite
+let isPolite = false; // سيتم تعيينه بناءً على معرف المستخدم
 
 // Define interface for the return type of useWebRTC
 interface WebRTCHook {
@@ -873,7 +876,7 @@ export function useWebRTC(): WebRTCHook {
   };
   
   /**
-   * Handle an incoming WebRTC offer
+   * Handle an incoming WebRTC offer with polite/impolite negotiation
    */
   const handleOffer = async (offer: RTCSessionDescriptionInit, targetPartnerId: string): Promise<void> => {
     if (!socket.value) {
@@ -890,11 +893,46 @@ export function useWebRTC(): WebRTCHook {
     globalPartnerId.value = targetPartnerId;
     partnerId.value = targetPartnerId;
     
+    // تحديد ما إذا كنا polite أو impolite بناءً على معرفات المستخدمين
+    // المستخدم ذو المعرف الأصغر سيكون "polite" ويتنازل عند حدوث تضارب
+    if (userId.value && targetPartnerId) {
+      isPolite = userId.value < targetPartnerId;
+      console.log(`[WebRTC] This peer is ${isPolite ? 'polite' : 'impolite'} in negotiation`);
+    }
+    
     try {
       // Make sure we have access to the microphone
       if (!globalLocalStream) {
         if (DEBUG) console.log('[WebRTC] Initializing local stream before handling offer');
         await initializeLocalStream();
+      }
+      
+      // التعامل مع حالة تضارب العروض (glare) - عندما يرسل كلا الطرفين عرضًا في نفس الوقت
+      const hasCollision = globalPeerConnection && 
+                          (isNegotiating || 
+                           globalPeerConnection.signalingState !== 'stable');
+                           
+      if (hasCollision) {
+        if (DEBUG) console.log(`[WebRTC] Signaling collision detected! Signaling state: ${globalPeerConnection?.signalingState}`);
+        
+        // إذا كنا "impolite"، نتجاهل العرض الوارد
+        if (!isPolite) {
+          console.log('[WebRTC] Impolite peer ignoring incoming offer due to collision');
+          return;
+        }
+        
+        // إذا كنا "polite"، نتنازل ونقبل العرض الوارد
+        console.log('[WebRTC] Polite peer backing off and accepting incoming offer');
+        
+        // إلغاء أي عرض محلي قيد التقدم
+        if (globalPeerConnection) {
+          await Promise.all([
+            globalPeerConnection.setLocalDescription({type: "rollback"}),
+            new Promise(resolve => setTimeout(resolve, 500)) // تأخير قصير للاستقرار
+          ]);
+          
+          console.log('[WebRTC] Local offer rolled back, ready to accept remote offer');
+        }
       }
       
       // إعادة تكوين أو إعادة استخدام اتصال WebRTC
@@ -1000,7 +1038,7 @@ export function useWebRTC(): WebRTCHook {
   };
   
   /**
-   * Handle an incoming answer
+   * Handle an incoming answer with improved state handling
    */
   const handleAnswer = async (answer: RTCSessionDescriptionInit): Promise<void> => {
     try {
@@ -1013,12 +1051,29 @@ export function useWebRTC(): WebRTCHook {
       const currentState = globalPeerConnection.signalingState;
       if (DEBUG) console.log(`[WebRTC] Current signaling state before handling answer: ${currentState}`);
 
-      // التحقق من حالة الإشارة قبل تعيين الوصف البعيد
+      // التعامل مع الإجابة بطريقة أكثر مرونة
       if (currentState === 'have-local-offer') {
+        // الحالة المثالية: لدينا عرض محلي وتلقينا إجابة
         if (DEBUG) console.log('[WebRTC] Setting remote description from answer');
         try {
           await globalPeerConnection.setRemoteDescription(new RTCSessionDescription(answer));
           if (DEBUG) console.log('[WebRTC] Remote description set successfully, signaling state now: ' + globalPeerConnection.signalingState);
+          
+          // إعادة تعيين علم التفاوض
+          isNegotiating = false;
+          
+          // تحقق من مرشحات ICE المتراكمة وأضفها
+          if (pendingCandidates.length > 0) {
+            console.log(`[WebRTC] Adding ${pendingCandidates.length} pending ICE candidates after answer`);
+            for (const candidate of pendingCandidates) {
+              try {
+                await globalPeerConnection.addIceCandidate(candidate);
+              } catch (err) {
+                console.warn('[WebRTC] Error adding pending ICE candidate:', err);
+              }
+            }
+            pendingCandidates = [];
+          }
         } catch (error: any) {
           console.error('[WebRTC] Error setting remote description:', error);
           
@@ -1035,6 +1090,7 @@ export function useWebRTC(): WebRTCHook {
                 if (DEBUG) console.log('[WebRTC] Retrying set remote description after delay');
                 await globalPeerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                 if (DEBUG) console.log('[WebRTC] Remote description set successfully on retry');
+                isNegotiating = false;
               } catch (retryError) {
                 console.error('[WebRTC] Final error setting remote description:', retryError);
                 // لا نرمي الخطأ هنا لتجنب إنهاء العملية
@@ -1044,54 +1100,89 @@ export function useWebRTC(): WebRTCHook {
             }
           }
         }
-      } else {
-        console.warn(`[WebRTC] Cannot set remote description: wrong signaling state: ${currentState}`);
+      } else if (currentState === 'stable') {
+        // قد نكون عالجنا هذه الإجابة بالفعل
+        console.log('[WebRTC] Already in stable state, checking connection status');
         
-        // إذا كنا في حالة مستقرة، قد نكون عالجنا هذه الإجابة بالفعل أو فاتنا العرض
-        if (currentState === 'stable') {
-          if (DEBUG) console.log('[WebRTC] Already in stable state, ignoring answer');
+        // تحقق من حالة الاتصال
+        if (globalConnectionState.value !== 'connected' && 
+            globalPeerConnection.connectionState !== 'connected' &&
+            globalPeerConnection.iceConnectionState !== 'connected') {
           
-          // في حالة الشبكات المختلفة، قد تكون هذه علامة على مشكلة في التزامن
-          // محاولة إعادة التفاوض بعد تأخير قصير
-          if (isLikelyDifferentNetwork || lastConnectionRequiredTurn) {
-            console.log('[WebRTC] In stable state but received answer - possible race condition on different networks');
-            
-            // إذا لم يكن الاتصال مستقرًا بعد، نحاول إعادة التفاوض
-            if (globalConnectionState.value !== 'connected' && globalPeerConnection?.connectionState !== 'connected') {
-              console.log('[WebRTC] Connection not established yet, initiating new negotiation');
+          console.log('[WebRTC] In stable state but connection not established, trying to improve connection');
+          
+          // إذا كان الاتصال غير مستقر، حاول تحسينه بإعادة التفاوض
+          setTimeout(() => {
+            if (globalPeerConnection && partnerId.value) {
+              console.log('[WebRTC] Initiating ICE restart to improve connection');
+              isRestartingIce = true;
+              rtcConfiguration.value = turnOnlyRtcConfiguration; // استخدام TURN فقط
+              startNegotiation();
+            }
+          }, 1000);
+        } else {
+          console.log('[WebRTC] Connection seems established, ignoring redundant answer');
+        }
+        
+        // إعادة تعيين علم التفاوض في جميع الحالات
+        isNegotiating = false;
+      } else if (currentState === 'have-remote-offer') {
+        // هذه حالة غير متوقعة - لدينا عرض بعيد ولكن تلقينا إجابة
+        console.warn('[WebRTC] Unexpected state: have-remote-offer while receiving answer');
+        
+        // استخدام آلية polite/impolite للتعامل مع التضارب
+        if (isPolite) {
+          // المستخدم المهذب يتنازل ويقبل الإجابة حتى في حالة التضارب
+          console.log('[WebRTC] Polite peer trying to handle answer despite state conflict');
+          
+          try {
+            // محاولة إعادة تعيين الاتصال بشكل نظيف
+            if (partnerId.value) {
+              // إغلاق الاتصال الحالي
+              closeConnection();
               
-              // تأخير قصير قبل إعادة التفاوض
-              setTimeout(() => {
+              // إعادة إنشاء اتصال جديد بعد فترة قصيرة
+              setTimeout(async () => {
                 if (partnerId.value) {
-                  // إعادة التفاوض باستخدام تكوين TURN فقط
-                  rtcConfiguration.value = turnOnlyRtcConfiguration;
-                  startNegotiation();
+                  await initializeConnection(partnerId.value);
+                  // إرسال إشارة للطرف الآخر لبدء التفاوض
+                  socket.value?.emit('webrtc-reconnect', { to: partnerId.value });
                 }
               }, 1500);
             }
+          } catch (error) {
+            console.error('[WebRTC] Error during polite recovery:', error);
           }
-        } else if (currentState === 'have-remote-offer') {
-          console.warn('[WebRTC] We have a remote offer but received an answer - signaling confusion');
-          // يمكن إعادة تعيين الاتصال لتصحيح تسلسل الإشارات
-          if (connectionRetryCount < MAX_CONNECTION_RETRIES) {
-            connectionRetryCount++;
-            if (DEBUG) console.log(`[WebRTC] Resetting connection due to signaling confusion (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
-            
-            // التبديل إلى وضع TURN فقط للتغلب على مشاكل NAT
-            rtcConfiguration.value = turnOnlyRtcConfiguration;
-            
-            // إغلاق الاتصال الحالي
-            closeConnection();
-            
-            // إعادة إنشاء اتصال جديد بعد فترة قصيرة
-            setTimeout(() => {
-              if (partnerId.value) {
-                initializeConnection(partnerId.value).then(() => {
-                  createOffer(partnerId.value);
-                });
-              }
-            }, 2000);
-          }
+        } else {
+          // المستخدم غير المهذب يصر على عرضه
+          console.log('[WebRTC] Impolite peer ignoring answer in have-remote-offer state');
+          
+          // إرسال عرض جديد بعد فترة قصيرة
+          setTimeout(() => {
+            if (partnerId.value) {
+              startNegotiation();
+            }
+          }, 2000);
+        }
+      } else {
+        // حالات أخرى غير متوقعة
+        console.warn(`[WebRTC] Unexpected signaling state: ${currentState}, trying to recover`);
+        
+        // محاولة استعادة الاتصال
+        if (connectionRetryCount < MAX_CONNECTION_RETRIES) {
+          connectionRetryCount++;
+          console.log(`[WebRTC] Attempting recovery (${connectionRetryCount}/${MAX_CONNECTION_RETRIES})`);
+          
+          // التبديل إلى وضع TURN فقط
+          rtcConfiguration.value = turnOnlyRtcConfiguration;
+          
+          // إعادة إنشاء الاتصال بعد تأخير
+          setTimeout(async () => {
+            if (partnerId.value) {
+              await initializeConnection(partnerId.value);
+              startNegotiation();
+            }
+          }, 2000);
         }
       }
     } catch (error) {
@@ -1103,6 +1194,9 @@ export function useWebRTC(): WebRTCHook {
       if (connectionRetryCount < MAX_CONNECTION_RETRIES) {
         await attemptConnectionRecovery();
       }
+      
+      // إعادة تعيين علم التفاوض في حالة الخطأ
+      isNegotiating = false;
     }
   };
   
@@ -1346,6 +1440,8 @@ export function useWebRTC(): WebRTCHook {
     socket.value.off('webrtc-connection-state');
     socket.value.off('webrtc-reconnect');
     socket.value.off('webrtc-force-turn');
+    socket.value.off('webrtc-negotiation-needed');
+    socket.value.off('webrtc-ready-to-negotiate');
     
     // إزالة المستمعين القديمين للأحداث التي لم تعد مستخدمة
     socket.value.off('voice-offer');
@@ -1519,6 +1615,66 @@ export function useWebRTC(): WebRTCHook {
       // Just log the current state - we don't need to do anything else
       // as the mute state is already stored in localStorage
       if (DEBUG) console.log(`[WebRTC] Current mute state before disconnect: ${currentMuteState ? 'muted' : 'unmuted'}`);
+    });
+    
+    // استقبال إشعارات التفاوض من الطرف الآخر
+    socket.value.on('webrtc-negotiation-needed', (data: { from: string, state: string }) => {
+      console.log(`[WebRTC] Received negotiation state "${data.state}" from partner:`, data.from);
+      
+      // التحقق من أن الإشعار من الشريك الحالي
+      if (data.from === partnerId.value) {
+        switch (data.state) {
+          case 'creating-offer':
+            // الطرف الآخر يقوم بإنشاء عرض، لذا علينا الانتظار
+            console.log('[WebRTC] Partner is creating offer, we should wait');
+            isNegotiating = true;
+            break;
+            
+          case 'waiting-for-stable':
+            // الطرف الآخر ينتظر استقرار الحالة
+            console.log('[WebRTC] Partner is waiting for stable state');
+            break;
+            
+          case 'in-progress':
+            // الطرف الآخر في وضع التفاوض
+            console.log('[WebRTC] Partner is already negotiating');
+            break;
+            
+          case 'ready':
+            // الطرف الآخر جاهز للتفاوض
+            console.log('[WebRTC] Partner is ready to negotiate');
+            // إذا لم نكن في وضع التفاوض، يمكننا البدء
+            if (!isNegotiating && globalPeerConnection?.signalingState === 'stable') {
+              setTimeout(() => {
+                startNegotiation();
+              }, 500);
+            }
+            break;
+        }
+      }
+    });
+    
+    // استقبال إشعارات الاستعداد للتفاوض
+    socket.value.on('webrtc-ready-to-negotiate', (data: { from: string }) => {
+      console.log('[WebRTC] Partner is ready to negotiate:', data.from);
+      
+      // التحقق من أن الإشعار من الشريك الحالي
+      if (data.from === partnerId.value) {
+        // إرسال إشعار بأننا جاهزون أيضًا
+        if (socket.value) {
+          socket.value.emit('webrtc-negotiation-needed', { 
+            to: data.from,
+            state: 'ready'
+          });
+        }
+        
+        // إذا كنا polite، نبدأ التفاوض
+        if (isPolite && !isNegotiating && globalPeerConnection?.signalingState === 'stable') {
+          setTimeout(() => {
+            startNegotiation();
+          }, 1000);
+        }
+      }
     });
     
     // معالجة طلبات إعادة الاتصال من الطرف الآخر
@@ -2382,6 +2538,15 @@ export function useWebRTC(): WebRTCHook {
         isNegotiating = false;
       } else {
         if (DEBUG) console.log('[WebRTC] Already negotiating, skipping new negotiation');
+        
+        // إرسال إشعار للطرف الآخر بأننا في وضع التفاوض
+        if (socket.value && partnerId.value) {
+          socket.value.emit('webrtc-negotiation-needed', { 
+            to: partnerId.value,
+            state: 'in-progress'
+          });
+        }
+        
         return;
       }
     }
@@ -2392,98 +2557,155 @@ export function useWebRTC(): WebRTCHook {
     
     // التحقق من حالة الإشارة قبل البدء
     const signalingState = globalPeerConnection.signalingState;
-    if (signalingState !== 'stable' && signalingState !== 'have-local-offer') {
-      console.log(`[WebRTC] Waiting for signaling state to stabilize. Current state: ${signalingState}`);
-      
-      // انتظار حتى تستقر حالة الإشارة
-      setTimeout(() => {
-        if (globalPeerConnection && (globalPeerConnection.signalingState === 'stable' || 
-            globalPeerConnection.signalingState === 'have-local-offer')) {
-          console.log('[WebRTC] Signaling state now stable, proceeding with negotiation');
-          startNegotiation();
-        } else {
-          console.log('[WebRTC] Signaling state still not stable, resetting connection');
-          isNegotiating = false;
-          
-          // إعادة تكوين الاتصال بالكامل
-          if (partnerId.value) {
-            closeConnection();
-            setTimeout(() => {
-              initializeConnection(partnerId.value);
-            }, 1000);
-          }
-        }
-      }, 2000);
-      
-      return;
-    }
     
-    try {
-      // استخدام TURN-only للشبكات المختلفة
-      if (isLikelyDifferentNetwork || lastConnectionRequiredTurn) {
-        console.log('[WebRTC] Using TURN-only configuration for negotiation');
-        rtcConfiguration.value = turnOnlyRtcConfiguration;
-      }
-      
-      // بدء تفاوض جديد بإنشاء عرض
-      globalPeerConnection.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false,
-        iceRestart: isRestartingIce // إعادة تشغيل ICE إذا كنا في وضع إعادة التشغيل
-      })
-      .then(offer => {
-        if (!globalPeerConnection) return;
+    // تنفيذ آلية polite/impolite للتعامل مع تضارب التفاوض
+    const hasGlare = signalingState !== 'stable';
+    
+    if (hasGlare) {
+      if (!isPolite) {
+        // المستخدم غير المهذب يتجاهل طلبات التفاوض المتزامنة
+        console.log(`[WebRTC] Impolite peer detected glare, waiting for signaling state to stabilize: ${signalingState}`);
         
-        // تسجيل SDP للتشخيص
-        if (DEBUG) console.log('[WebRTC] Local offer SDP:', offer.sdp);
-        
-        return globalPeerConnection.setLocalDescription(offer);
-      })
-      .then(() => {
-        if (!globalPeerConnection || !socket.value || !partnerId.value) return;
-        
-        // إرسال العرض الجديد عبر قناتين للتأكد من وصوله
-        socket.value.emit('voice-offer', {
-          offer: globalPeerConnection.localDescription,
-          to: partnerId.value
-        });
-        
-        // إرسال بتنسيق بديل أيضًا
-        socket.value.emit('webrtc-signal', {
-          type: 'offer',
-          offer: globalPeerConnection.localDescription,
-          to: partnerId.value
-        });
-        
-        if (DEBUG) console.log('[WebRTC] Sent negotiation offer');
-        
-        // بدء مراقبة الاتصال
-        startConnectionMonitoring();
-      })
-      .catch(error => {
-        console.error('[WebRTC] Error during negotiation:', error);
-        
-        // محاولة إصلاح الخطأ
-        if (error.toString().includes('InvalidStateError')) {
-          console.log('[WebRTC] Invalid state during negotiation, resetting connection');
-          
-          if (partnerId.value) {
-            closeConnection();
-            setTimeout(() => {
-              initializeConnection(partnerId.value);
-            }, 1500);
-          }
+        // إرسال إشعار للطرف الآخر بأننا ننتظر
+        if (socket.value && partnerId.value) {
+          socket.value.emit('webrtc-negotiation-needed', { 
+            to: partnerId.value,
+            state: 'waiting-for-stable'
+          });
         }
-      })
-      .finally(() => {
-        // إعادة تعيين العلم بعد فترة
+        
+        // انتظار فترة قبل إعادة المحاولة
         setTimeout(() => {
           isNegotiating = false;
-        }, 5000); // زيادة المهلة من 2000 إلى 5000 مللي ثانية
-      });
+          if (globalPeerConnection?.signalingState === 'stable') {
+            console.log('[WebRTC] Signaling state now stable, can proceed with negotiation');
+            startNegotiation();
+          }
+        }, 2000);
+        
+        return;
+      } else {
+        // المستخدم المهذب يتنازل ويعيد ضبط الحالة المحلية
+        console.log(`[WebRTC] Polite peer detected glare, rolling back local description`);
+        
+        try {
+          // إعادة ضبط الوصف المحلي إذا كان هناك تضارب
+          if (signalingState === 'have-local-offer') {
+            globalPeerConnection.setLocalDescription({type: 'rollback'})
+              .then(() => {
+                console.log('[WebRTC] Successfully rolled back local description');
+                // الآن يمكننا المتابعة بعد إعادة الضبط
+                setTimeout(() => {
+                  if (globalPeerConnection?.signalingState === 'stable') {
+                    startNegotiation();
+                  }
+                }, 1000);
+              })
+              .catch(err => {
+                console.error('[WebRTC] Error rolling back:', err);
+                isNegotiating = false;
+              });
+            return;
+          }
+        } catch (error: any) {
+          console.error('[WebRTC] Error during rollback:', error);
+          isNegotiating = false;
+          return;
+        }
+      }
+    }
+    
+    // استخدام TURN-only افتراضيًا للحصول على أفضل توافقية
+    console.log('[WebRTC] Using TURN-only configuration for negotiation');
+    rtcConfiguration.value = turnOnlyRtcConfiguration;
+    
+    try {
+      // إرسال إشعار للطرف الآخر بأننا نبدأ التفاوض
+      if (socket.value && partnerId.value) {
+        socket.value.emit('webrtc-negotiation-needed', { 
+          to: partnerId.value,
+          state: 'creating-offer'
+        });
+      }
+      
+      // انتظار لجمع مرشحات ICE قبل إنشاء العرض
+      setTimeout(async () => {
+        try {
+          if (!globalPeerConnection) return;
+          
+          // بدء تفاوض جديد بإنشاء عرض
+          const offer = await globalPeerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false,
+            iceRestart: isRestartingIce // إعادة تشغيل ICE إذا كنا في وضع إعادة التشغيل
+          });
+          
+          // تسجيل SDP للتشخيص
+          if (DEBUG) console.log('[WebRTC] Local offer SDP:', offer.sdp);
+          
+          // التحقق من حالة الإشارة مرة أخرى قبل تعيين الوصف المحلي
+          if (!globalPeerConnection || globalPeerConnection.signalingState !== 'stable') {
+            console.warn(`[WebRTC] Signaling state changed during offer creation: ${globalPeerConnection?.signalingState}`);
+            
+            // إذا كنا مهذبين، نتنازل
+            if (isPolite) {
+              isNegotiating = false;
+              return;
+            }
+          }
+          
+          // تعيين الوصف المحلي
+          await globalPeerConnection.setLocalDescription(offer);
+          console.log('[WebRTC] Local description set successfully');
+          
+          // انتظار قصير لجمع المزيد من مرشحات ICE قبل إرسال العرض
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          if (!globalPeerConnection || !socket.value || !partnerId.value) return;
+          
+          // إرسال العرض الجديد
+          socket.value.emit('webrtc-signal', {
+            type: 'offer',
+            offer: globalPeerConnection.localDescription,
+            to: partnerId.value
+          });
+          
+          console.log('[WebRTC] Sent negotiation offer');
+          
+          // بدء مراقبة الاتصال
+          startConnectionMonitoring();
+          
+          // إعادة تعيين علم إعادة تشغيل ICE
+          isRestartingIce = false;
+        } catch (error) {
+          console.error('[WebRTC] Error creating/sending offer:', error);
+          
+          // محاولة إصلاح الخطأ
+          if (error.toString().includes('InvalidStateError')) {
+            console.log('[WebRTC] Invalid state during offer creation, resetting connection');
+            
+            if (partnerId.value) {
+              closeConnection();
+              setTimeout(() => {
+                initializeConnection(partnerId.value);
+              }, 1500);
+            }
+          }
+          
+          isNegotiating = false;
+        }
+      }, 500); // انتظار قصير لجمع مرشحات ICE قبل إنشاء العرض
     } catch (error) {
       console.error('[WebRTC] Failed to start negotiation:', error);
       isNegotiating = false;
+    } finally {
+      // إعادة تعيين العلم بعد فترة
+      setTimeout(() => {
+        if (isNegotiating) {
+          console.log('[WebRTC] Negotiation timeout, resetting negotiation state');
+          isNegotiating = false;
+        }
+      }, 10000); // زيادة المهلة لضمان اكتمال التفاوض
     }
   }
   
@@ -2887,61 +3109,145 @@ function updateGlobalState(state: string): void {
 }
 
 /**
- * وظيفة للكشف إذا كان المستخدمان على نفس الشبكة أو شبكات مختلفة
+ * وظيفة محسنة للكشف إذا كان المستخدمان على نفس الشبكة أو شبكات مختلفة
  * هذا يساعد على تحديد الحاجة لاستخدام خوادم TURN مبكراً
  */
 async function detectNetworkType(): Promise<boolean> {
   try {
-    // محاولة كشف عنوان IP العام للمستخدم الحالي
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 ثواني كحد أقصى
-
-    const response = await fetch('https://api.ipify.org?format=json', { 
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      cache: 'no-cache',
-      mode: 'cors',
-      signal: controller.signal
+    // إنشاء اتصال مؤقت لجمع مرشحات ICE
+    const pc = new RTCPeerConnection(standardRtcConfiguration);
+    
+    // إنشاء قناة بيانات لتحفيز جمع ICE
+    pc.createDataChannel('network-detection');
+    
+    // تخزين مرشحات ICE للتحليل
+    const candidates: RTCIceCandidate[] = [];
+    
+    // الاستماع لمرشحات ICE
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        candidates.push(event.candidate);
+        
+        // تسجيل المرشحات للتشخيص
+        console.log(`[NetworkDetection] ICE candidate: ${event.candidate.candidate}`);
+      }
+    };
+    
+    // إنشاء عرض لبدء جمع ICE
+    await pc.createOffer().then(offer => pc.setLocalDescription(offer));
+    
+    // انتظار اكتمال جمع ICE أو انتهاء المهلة
+    await new Promise<void>((resolve) => {
+      const checkState = () => {
+        if (pc.iceGatheringState === 'complete') {
+          console.log('[NetworkDetection] ICE gathering complete');
+          resolve();
+        } else if (candidates.length >= 8) {
+          // لدينا عدد كافٍ من المرشحات لاتخاذ قرار
+          console.log('[NetworkDetection] Collected enough candidates');
+          resolve();
+        } else {
+          setTimeout(checkState, 500);
+        }
+      };
+      
+      // بدء فحص الحالة
+      checkState();
+      
+      // انتهاء المهلة بعد 8 ثوانٍ (زيادة من 5 إلى 8 ثوانٍ)
+      setTimeout(() => {
+        console.log('[NetworkDetection] Timeout reached, proceeding with analysis');
+        resolve();
+      }, 8000);
     });
     
-    clearTimeout(timeoutId);
+    // تنظيف
+    pc.close();
     
-    if (response.ok) {
-      const data = await response.json();
-      const myPublicIp = data.ip;
-      
-      // تخزين عنوان IP محليًا للمقارنة لاحقًا
-      localStorage.setItem('my_public_ip', myPublicIp);
-      console.log('[WebRTC] Detected public IP:', myPublicIp);
-      
-      // نعتبر أن هناك احتمال كبير أن تكون الشبكات مختلفة في الحالات التالية:
-      // 1. إذا كانت هناك تجربة سابقة تطلبت استخدام TURN
-      // 2. إذا كان المستخدم يستخدم شبكة خلوية (التحقق من دعم API للاتصال)
-      let isOnMobileNetwork = false;
-      
-      // التحقق من دعم Navigator.connection API قبل استخدامه
-      // استخدام any لتجنب أخطاء TypeScript لأن connection ليس جزءًا قياسيًا من واجهة Navigator
-      const connection = (navigator as any).connection || 
-                         (navigator as any).mozConnection || 
-                         (navigator as any).webkitConnection;
-      
-      if (connection) {
-        isOnMobileNetwork = connection.type === 'cellular' || 
-                           (connection.effectiveType && ['3g', '4g', '5g'].includes(connection.effectiveType));
+    // تخزين للتصحيح
+    window.__testIceCandidates = candidates;
+    
+    // تحليل المرشحات بشكل أكثر تفصيلاً
+    let hasHost = false;
+    let hasPrivateIPv4 = false;
+    let hasPublicIPv4 = false;
+    let hasServerReflexive = false;
+    let hasRelay = false;
+    let natTypes = new Set<string>();
+    
+    // تعبيرات منتظمة للتعرف على أنواع العناوين
+    const privateIpRegex = /192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\./;
+    const publicIpRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
+    
+    for (const candidate of candidates) {
+      if (candidate.candidate) {
+        const candidateStr = candidate.candidate.toLowerCase();
+        
+        // تحديد نوع المرشح
+        if (candidateStr.includes(' host ')) {
+          hasHost = true;
+          
+          // فحص ما إذا كان عنوان IP خاص
+          if (privateIpRegex.test(candidateStr)) {
+            hasPrivateIPv4 = true;
+          } else if (publicIpRegex.test(candidateStr) && 
+                    !privateIpRegex.test(candidateStr) && 
+                    !candidateStr.includes('127.0.0.1')) {
+            hasPublicIPv4 = true;
+          }
+        } else if (candidateStr.includes(' srflx ')) {
+          // مرشحات server reflexive تشير إلى وجود NAT
+          hasServerReflexive = true;
+          natTypes.add('srflx');
+          
+          // استخراج عنوان IP العام
+          const ipMatch = candidateStr.match(/([0-9]{1,3}\.){3}[0-9]{1,3}/);
+          if (ipMatch && !privateIpRegex.test(ipMatch[0])) {
+            hasPublicIPv4 = true;
+          }
+        } else if (candidateStr.includes(' relay ')) {
+          // مرشحات relay تشير إلى استخدام TURN
+          hasRelay = true;
+          natTypes.add('relay');
+        } else if (candidateStr.includes(' prflx ')) {
+          // مرشحات peer reflexive تشير إلى NAT أكثر تعقيداً
+          natTypes.add('prflx');
+        }
       }
-      
-      console.log('[WebRTC] Network detection - Mobile network:', isOnMobileNetwork);
-      console.log('[WebRTC] Network detection - Previous TURN required:', lastConnectionRequiredTurn);
-      
-      return isOnMobileNetwork || lastConnectionRequiredTurn;
     }
     
-    // في حالة فشل الكشف، نفترض أننا قد نحتاج TURN للأمان
-    console.log('[WebRTC] Failed to detect network type, assuming different networks');
-    return true;
-  } catch (error) {
+    // تحليل النتائج
+    console.log(`[NetworkDetection] Analysis: hasHost=${hasHost}, hasPrivateIPv4=${hasPrivateIPv4}, hasPublicIPv4=${hasPublicIPv4}, hasServerReflexive=${hasServerReflexive}, hasRelay=${hasRelay}, natTypes=${Array.from(natTypes).join(',')}`);
+    
+    // الاستنتاج:
+    // 1. إذا كان لدينا مرشحات srflx فقط، فمن المحتمل أن نكون خلف NAT بسيط
+    // 2. إذا كان لدينا مرشحات prflx أو عدة أنواع من NAT، فمن المحتمل أن نكون خلف NAT معقد
+    // 3. إذا كان لدينا مرشحات relay فقط، فمن المحتمل أن نكون خلف جدار حماية مقيد
+    
+    // عوامل تشير إلى احتمالية الحاجة إلى TURN:
+    // - وجود NAT معقد (prflx)
+    // - عدم وجود مرشحات host على الإطلاق
+    // - وجود مرشحات relay فقط
+    
+    const needsTurn = (
+      natTypes.has('prflx') || 
+      !hasHost || 
+      (hasRelay && !hasServerReflexive && !hasHost) ||
+      (hasPrivateIPv4 && hasPublicIPv4) ||
+      lastConnectionRequiredTurn
+    );
+    
+    console.log(`[NetworkDetection] Conclusion: ${needsTurn ? 'Different networks likely, TURN recommended' : 'Same network likely, direct connection possible'}`);
+    
+    // تخزين النتيجة للاستخدام المستقبلي
+    if (needsTurn) {
+      localStorage.setItem('last_conn_required_turn', 'true');
+    }
+    
+    return needsTurn;
+  } catch (error: any) {
     console.error('[WebRTC] Error detecting network type:', error);
-    // في حالة أي خطأ، نفترض أن المستخدمين على شبكات مختلفة للأمان
+    // الافتراض أننا بحاجة إلى TURN للسلامة
     return true;
   }
 }

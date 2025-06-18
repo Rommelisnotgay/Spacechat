@@ -32,7 +32,7 @@ export async function fetchTurnCredentialsFromAPI(): Promise<RTCConfiguration | 
       return {
         iceServers,
         iceCandidatePoolSize: 15,
-        iceTransportPolicy: 'all',
+        iceTransportPolicy: 'relay',
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require'
       };
@@ -70,7 +70,11 @@ export async function fetchTurnCredentials(): Promise<RTCConfiguration | null> {
     if (response.data && response.data.success && response.data.rtcConfig) {
       hasFetchedCredentials = true;
       console.log('Successfully fetched TURN credentials from server');
-      return response.data.rtcConfig;
+      
+      const config = response.data.rtcConfig;
+      config.iceTransportPolicy = 'relay';
+      
+      return config;
     }
     
     console.warn('Server returned invalid TURN credentials format, using fallback');
@@ -131,7 +135,7 @@ export const standardRtcConfiguration: RTCConfiguration = {
     }
   ],
   iceCandidatePoolSize: 15,
-  iceTransportPolicy: 'all',
+  iceTransportPolicy: 'relay',
   bundlePolicy: 'max-bundle',
   rtcpMuxPolicy: 'require'
 };
@@ -177,7 +181,7 @@ export const fastRtcConfiguration: RTCConfiguration = {
     }
   ],
   iceCandidatePoolSize: 8,
-  iceTransportPolicy: 'all',
+  iceTransportPolicy: 'relay',
   bundlePolicy: 'max-bundle',
   rtcpMuxPolicy: 'require'
 };
