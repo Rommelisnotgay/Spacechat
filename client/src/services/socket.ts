@@ -1,16 +1,30 @@
 import { ref, onMounted, onUnmounted, getCurrentInstance } from 'vue';
 import { io, Socket } from 'socket.io-client';
 
-// تحديد عنوان API بناءً على البيئة
+// تحديد عنوان API بناءً على البيئة - مرونة عالية لأي بيئة
 const getApiUrl = () => {
-  // في الإنتاج، استخدم نفس النطاق (حيث يقدم الخادم العميل)
+  // استخدام عنوان API المكون بشكل صريح إذا كان متوفرًا
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
+  // اكتشاف البروتوكول الحالي (http أو https)
+  const protocol = window.location.protocol;
+  
+  // في الإنتاج، استخدم نفس النطاق الكامل (المضيف والبروتوكول والمنفذ)
   if (import.meta.env.PROD) {
-    // عند التشغيل على Railway أو أي استضافة أخرى
     return window.location.origin;
   }
   
-  // للتطوير، استخدم عنوان API المكون أو الافتراضي مع المنفذ 8080
-  return import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8080`;
+  // للتطوير، حدد بناءً على المضيف والمنفذ النشط
+  const host = window.location.hostname;
+  
+  // افتراضيًا استخدم المنفذ 8080 للخادم في التطوير
+  // يمكن تغييره من خلال متغيرات البيئة عند الحاجة
+  const serverPort = import.meta.env.VITE_SERVER_PORT || '8080';
+  
+  // استخدام نفس البروتوكول الذي يستخدمه المتصفح حاليًا لتجنب مشاكل المحتوى المختلط
+  return `${protocol}//${host}:${serverPort}`;
 };
 
 // مثيل Socket
