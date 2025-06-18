@@ -82,7 +82,7 @@ export function useSocket() {
       reconnectionDelay: INITIAL_RECONNECTION_DELAY,
       reconnectionDelayMax: MAX_RECONNECTION_DELAY,
       timeout: CONNECTION_TIMEOUT, 
-      transports: ['websocket', 'polling'], // محاولة WebSocket أولاً ثم الرجوع إلى polling إذا لزم الأمر
+      transports: ['websocket'], // WebSocket only for performance in production
       extraHeaders: {
         'X-Client-Version': '1.0.0'
       },
@@ -276,34 +276,13 @@ export function useSocket() {
     socket.value.off('queue-waiting');
   }
 
-  // Force reconnection with improved handling
+  // Force reconnection
   function reconnect() {
     if (socket.value) {
       console.log('Forcing socket reconnection...');
-      
-      // إلغاء أي محاولات إعادة اتصال حالية
-      socket.value.io.opts.reconnection = false;
       socket.value.disconnect();
-      
-      // إعادة تعيين خيارات إعادة الاتصال
-      setTimeout(() => {
-        if (socket.value) {
-          // تمكين إعادة الاتصال مرة أخرى
-          socket.value.io.opts.reconnection = true;
-          socket.value.io.opts.reconnectionAttempts = MAX_RECONNECTION_ATTEMPTS;
-          socket.value.io.opts.reconnectionDelay = INITIAL_RECONNECTION_DELAY;
-          socket.value.io.opts.reconnectionDelayMax = MAX_RECONNECTION_DELAY;
-          
-          // محاولة الاتصال
-          socket.value.connect();
-          console.log('Reconnection attempt initiated');
-        } else {
-          // إذا لم يكن هناك اتصال، قم بتهيئة اتصال جديد
-          initializeSocket();
-        }
-      }, 1000);
+      socket.value.connect();
     } else {
-      // إذا لم يكن هناك اتصال، قم بتهيئة اتصال جديد
       initializeSocket();
     }
   }
