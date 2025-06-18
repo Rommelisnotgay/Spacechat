@@ -153,10 +153,25 @@ export const turnOnlyRtcConfiguration: RTCConfiguration = {
     {
       urls: [
         'turn:global.relay.metered.ca:443?transport=tcp',
-        'turns:global.relay.metered.ca:443?transport=tcp'
+        'turns:global.relay.metered.ca:443?transport=tcp',
+        // إضافة خوادم إضافية للتوافق مع المزيد من شبكات NAT
+        'turn:a.relay.metered.ca:443?transport=tcp',
+        'turns:a.relay.metered.ca:443?transport=tcp',
+        'turn:b.relay.metered.ca:443?transport=tcp',
+        'turns:b.relay.metered.ca:443?transport=tcp'
       ],
       username: METERED_TURN_USERNAME,
       credential: METERED_TURN_CREDENTIAL
+    },
+    
+    // إضافة خوادم Google TURN كخيار إضافي
+    {
+      urls: [
+        'turn:64.233.165.127:19305?transport=tcp',
+        'turn:74.125.140.127:19305?transport=tcp'
+      ],
+      username: 'CKjCuLwFEgahxNRjE/s6Hc/UfSPmPSFvbTfnGd+KaGg=',
+      credential: 'VJwbRpc3PlU0jP+nKCjNF+AE0to='
     }
   ],
   iceCandidatePoolSize: 15,

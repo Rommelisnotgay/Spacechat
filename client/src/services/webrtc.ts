@@ -78,14 +78,21 @@ const CONNECTION_MONITOR_INTERVAL = 8000;
 const CONNECTION_STABILITY_THRESHOLD = 15000; // seconds before considering the connection stable
 
 // Add constants for connection timeouts - optimized for faster connections
-const CONNECTION_TIMEOUT = 10000; // 10 seconds for initial connection
-const RECONNECT_DELAY = 800; // 800ms delay for reconnect
+const CONNECTION_TIMEOUT = 30000; // زيادة من 10 ثواني إلى 30 ثانية
+const RECONNECT_DELAY = 1000; // زيادة من 800 إلى 1000 مللي ثانية للسماح بوقت أطول للإعادة
+const MAX_RECONNECTION_DELAY = 30000; // الحد الأقصى للتأخير 30 ثانية
 
 // Add an automatic reconnection system with exponential backoff
 let reconnectionTimer: number | null = null;
 let reconnectionAttempts = 0;
 const MAX_RECONNECTION_ATTEMPTS = 10; // زيادة من 5 إلى 10
 const INITIAL_RECONNECTION_DELAY = 1000; // 1 second
+
+// متغيرات لتتبع جودة الاتصال
+let connectionQualityInterval: number | null = null;
+const CONNECTION_QUALITY_CHECK_INTERVAL = 10000; // 10 ثواني
+let consecutivePoorQualityCount = 0;
+const POOR_QUALITY_THRESHOLD = 3; // عدد المرات المتتالية قبل اتخاذ إجراء
 
 // Define interface for the return type of useWebRTC
 interface WebRTCHook {
@@ -292,33 +299,56 @@ async function checkForTurnCandidates(pc: RTCPeerConnection): Promise<boolean> {
   if (!pc) return false;
   
   try {
-    // الحصول على إحصائيات الاتصال
     const stats = await pc.getStats();
-    let hasRelayCandidate = false;
+    let hasTurnCandidate = false;
+    let hasSuccessfulTurnCandidate = false;
     
-    // البحث عن مرشحات من النوع relay
-    stats.forEach(stat => {
-      if (stat.type === 'local-candidate' || stat.type === 'remote-candidate') {
-        if (stat.candidateType === 'relay') {
-          console.log(`[WebRTC] ✅ Found ${stat.type} relay candidate:`, stat);
-          hasRelayCandidate = true;
-        } else if (DEBUG) {
-          console.log(`[WebRTC] Found ${stat.type} ${stat.candidateType} candidate:`, stat);
+    stats.forEach((report) => {
+      if (report.type === 'local-candidate' || report.type === 'remote-candidate') {
+        // التحقق من أن المرشح هو من نوع 'relay' وهو ما يشير إلى استخدام خادم TURN
+        if (report.candidateType === 'relay') {
+          hasTurnCandidate = true;
+          console.log(`[WebRTC] Found TURN candidate: ${report.candidateType} at ${report.address}:${report.port}`);
         }
+      }
+      
+      // التحقق مما إذا كان هناك زوج مرشح ناجح باستخدام TURN
+      if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+        const localCandidateId = report.localCandidateId;
+        const remoteCandidateId = report.remoteCandidateId;
+        
+        // يلزمنا البحث عن هذه المرشحات للتحقق من نوعها
+        stats.forEach((candidateReport) => {
+          if ((candidateReport.id === localCandidateId || candidateReport.id === remoteCandidateId) && 
+              candidateReport.candidateType === 'relay') {
+            hasSuccessfulTurnCandidate = true;
+            console.log('[WebRTC] Found successful TURN candidate pair');
+            
+            // تخزين هذه المعلومة لاستخدامها في مرات الاتصال اللاحقة
+            window.localStorage.setItem('last_conn_required_turn', 'true');
+            window.localStorage.setItem('last_turn_timestamp', Date.now().toString());
+          }
+        });
       }
     });
     
-    // إعلام المستخدم إذا لم تكن هناك مرشحات relay
-    if (!hasRelayCandidate) {
-      console.warn('[WebRTC] ⚠️ No relay candidates found. TURN servers may not be working properly.');
-      console.log('[WebRTC] 🔍 ICE Servers configuration:', rtcConfiguration.value.iceServers);
-    } else {
-      console.log('[WebRTC] ✅ TURN servers are working properly.');
+    if (hasTurnCandidate) {
+      console.log('[WebRTC] Connection using TURN candidates');
+      return true;
     }
     
-    return hasRelayCandidate;
+    if (!hasTurnCandidate) {
+      console.log('[WebRTC] No TURN candidates found in connection');
+      // إذا نجح الاتصال بدون مرشحات TURN، يمكننا إزالة الإشارة السابقة
+      if (pc.connectionState === 'connected') {
+        window.localStorage.removeItem('last_conn_required_turn');
+        console.log('[WebRTC] Connection succeeded without TURN, removed flag');
+      }
+    }
+    
+    return hasSuccessfulTurnCandidate;
   } catch (error) {
-    console.error('[WebRTC] Error checking for relay candidates:', error);
+    console.error('[WebRTC] Error checking for TURN candidates:', error);
     return false;
   }
 }
@@ -434,9 +464,16 @@ export function useWebRTC(): WebRTCHook {
     }
 
     try {
+      // اختيار التكوين المناسب بناءً على ظروف الشبكة
+      const configToUse = selectAppropriateRtcConfiguration();
+      
+      if (DEBUG) {
+        console.log('[WebRTC] ICE configuration:', configToUse);
+      }
+      
       // Create a new RTCPeerConnection with our configuration
-    const pc = new RTCPeerConnection(rtcConfiguration.value);
-    
+      const pc = new RTCPeerConnection(configToUse);
+      
       // On negotiation needed
       pc.onnegotiationneeded = async (event) => {
         if (DEBUG) console.log('[WebRTC] Negotiation needed event', event);
@@ -571,19 +608,43 @@ export function useWebRTC(): WebRTCHook {
       };
       
       // Connection state change (modern browsers only)
-      pc.onconnectionstatechange = () => {
-        if (DEBUG) console.log('[WebRTC] Connection state changed to:', pc.connectionState);
+      pc.onconnectionstatechange = (event) => {
+        if (DEBUG) console.log(`[WebRTC] Connection state changed: ${pc.connectionState}`);
         
+        // تحديث الحالة العالمية
         updateGlobalState(pc.connectionState);
         
-        if (pc.connectionState === 'connected') {
-          // Clear any previous failure reasons
-          failureReason = '';
-          connectionRetryCount = 0;
-        } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-          if (pc.connectionState === 'failed' && !failureReason) {
-            failureReason = 'PeerConnection failed';
-          }
+        // إجراءات بناءً على حالة الاتصال
+        switch (pc.connectionState) {
+          case 'connected':
+            // تم الاتصال بنجاح
+            console.log('[WebRTC] Connection established successfully');
+            
+            // إعادة تعيين عداد المحاولات
+            connectionRetryCount = 0;
+            reconnectionAttempts = 0;
+            
+            // بدء مراقبة جودة الاتصال
+            startConnectionQualityMonitoring(pc);
+            
+            // إرسال إحصائيات تشخيصية
+            sendDiagnosticData(pc, 'connection-established');
+            
+            // بدء جمع الإحصائيات
+            startStatsCollection();
+            break;
+          case 'failed':
+            console.warn('[WebRTC] Connection failed');
+            updateGlobalState('failed');
+            break;
+          case 'disconnected':
+            console.warn('[WebRTC] Connection disconnected');
+            updateGlobalState('disconnected');
+            break;
+          case 'closed':
+            console.warn('[WebRTC] Connection closed');
+            updateGlobalState('closed');
+            break;
         }
       };
       
@@ -1184,9 +1245,11 @@ export function useWebRTC(): WebRTCHook {
   const closeConnection = (): void => {
     if (DEBUG) console.log('[WebRTC] Closing connection');
     
-    // Stop all activity
+    // Stop all monitoring and heartbeat
     stopConnectionHeartbeat();
     stopConnectionMonitoring();
+    stopConnectionQualityMonitoring();
+    stopStatsCollection();
     
       if (globalPeerConnection) {
         try {
@@ -2354,58 +2417,46 @@ export function useWebRTC(): WebRTCHook {
    * Improve handling of automatic reconnection for WebRTC
    */
   function attemptReconnection(partnerId: string | null) {
-    // قطع الاتصال الحالي قبل محاولة إعادة الاتصال
-    closeConnection();
+    if (reconnectionTimer !== null) {
+      clearTimeout(reconnectionTimer);
+    }
     
-    // زيادة عدد محاولات إعادة الاتصال
+    if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
+      console.log(`[WebRTC] Max reconnection attempts (${MAX_RECONNECTION_ATTEMPTS}) reached. Giving up.`);
+      updateGlobalState('failed');
+      return;
+    }
+    
     reconnectionAttempts++;
     
-    // حساب التأخير باستخدام التأخير التصاعدي (exponential backoff) 
-    // للحد الأدنى 1 ثانية والحد الأقصى 30 ثانية
-    const delay = Math.min(
-      INITIAL_RECONNECTION_DELAY * Math.pow(1.5, reconnectionAttempts - 1),
-      30000
-    );
+    // استخدام تأخير متزايد بشكل أسي
+    const delay = Math.min(INITIAL_RECONNECTION_DELAY * Math.pow(1.5, reconnectionAttempts - 1), MAX_RECONNECTION_DELAY);
     
-    console.log(`[WebRTC] Attempting reconnection ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS} after ${delay}ms`);
+    // إذا كانت هذه المحاولة الثانية أو أكثر، استخدم TURN-only
+    if (reconnectionAttempts >= 2) {
+      console.log('[WebRTC] Using TURN-only config for reconnection attempt');
+      rtcConfiguration.value = turnOnlyRtcConfiguration;
+      window.localStorage.setItem('last_conn_required_turn', 'true');
+    }
     
-    // إلغاء أي مؤقت سابق
-    cleanupReconnectionTimer();
+    console.log(`[WebRTC] Attempting reconnection in ${delay}ms (attempt ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS})`);
     
-    // إعادة الاتصال بعد التأخير
-    reconnectionTimer = window.setTimeout(async () => {
-      reconnectionTimer = null;
-      
-      if (reconnectionAttempts >= MAX_RECONNECTION_ATTEMPTS) {
-        console.log(`[WebRTC] Reached maximum reconnection attempts (${MAX_RECONNECTION_ATTEMPTS})`);
-        updateGlobalState('failed');
-        // إعلام المستخدم بالفشل النهائي
-        socket.value?.emit('webrtc-connection-state', {
-          state: 'failed',
-          to: partnerId,
-          details: { attempts: reconnectionAttempts }
-        });
-        
-        // اتخاذ إجراء آخر - مثل الرجوع إلى قائمة الانتظار
-        socket.value?.emit('return-to-queue', { reason: 'connection-failed' });
+    reconnectionTimer = setTimeout(async () => {
+      // تأكد من أننا ما زلنا بحاجة لإعادة الاتصال
+      if (globalConnectionState.value === 'connected' || globalConnectionState.value === 'completed') {
+        console.log('[WebRTC] Connection already established, cancelling reconnection attempt');
+        reconnectionAttempts = 0;
         return;
       }
       
-      // محاولة إعادة الاتصال
       try {
+        console.log(`[WebRTC] Executing reconnection attempt ${reconnectionAttempts}`);
+        
+        // إغلاق الاتصال الحالي
+        closeConnection();
+        
         // بدء التفاوض من جديد
         await initializeConnection(partnerId);
-        
-        if (partnerId) {
-          // إعلام الطرف الآخر بمحاولة إعادة الاتصال
-          socket.value?.emit('webrtc-reconnect', { 
-            to: partnerId,
-            details: { attempts: reconnectionAttempts }
-          });
-          
-          // بدء التفاوض من جديد
-          startNegotiation();
-        }
       } catch (error) {
         console.error('[WebRTC] Reconnection attempt failed:', error);
         
@@ -2622,5 +2673,193 @@ function updateGlobalState(state: string): void {
         console.log(`[WebRTC] Connection failure count: ${connectionRetryCount}/${MAX_CONNECTION_RETRIES}`);
       }
     }
+  }
+}
+
+// اكتشاف ظروف الشبكة الصعبة
+function detectDifficultNetworkConditions(): boolean {
+  // التحقق مما إذا تم استخدام TURN في الاتصال السابق
+  const lastConnRequiredTurn = window.localStorage.getItem('last_conn_required_turn') === 'true';
+  const lastTurnTimestamp = parseInt(window.localStorage.getItem('last_turn_timestamp') || '0', 10);
+  
+  // التحقق من هل الاتصال السابق الذي تطلب TURN كان حديثًا (خلال آخر ساعة)
+  const isRecentTurnUse = lastConnRequiredTurn && 
+                          lastTurnTimestamp > 0 && 
+                          (Date.now() - lastTurnTimestamp) < (60 * 60 * 1000); // ساعة واحدة
+  
+  // فشل اتصالات متعددة
+  const isConnectionUnstable = connectionRetryCount >= 2;
+  
+  // نوع الشبكة إذا كانت هذه المعلومات متاحة
+  const connection = (navigator as any).connection;
+  let isWeakConnection = false;
+  
+  if (connection) {
+    // اكتشاف الاتصالات البطيئة أو غير المستقرة
+    const effectiveType = connection.effectiveType; // 2g, 3g, 4g
+    const downlink = connection.downlink; // ميجابت/ثانية
+    
+    isWeakConnection = (
+      effectiveType === '2g' || 
+      effectiveType === 'slow-2g' || 
+      (downlink && downlink < 1.5) // اعتبار أقل من 1.5 ميجابت/ثانية ضعيف
+    );
+    
+    console.log(`[WebRTC] Network conditions: type=${effectiveType}, downlink=${downlink}Mbps`);
+  }
+  
+  // الدمج بين الظروف المختلفة لتحديد ما إذا كنا في ظروف شبكة صعبة
+  const isDifficult = isRecentTurnUse || isConnectionUnstable || isWeakConnection;
+  
+  console.log(`[WebRTC] Network conditions assessment: ${isDifficult ? 'DIFFICULT' : 'NORMAL'}`, {
+    lastConnRequiredTurn,
+    isRecentTurnUse,
+    isConnectionUnstable,
+    isWeakConnection,
+    connectionRetryCount
+  });
+  
+  return isDifficult;
+}
+
+// اختيار التكوين المناسب بناءً على الظروف
+function selectAppropriateRtcConfiguration(): RTCConfiguration {
+  if (detectDifficultNetworkConditions()) {
+    console.log('[WebRTC] Using TURN-only configuration due to difficult network conditions');
+    window.localStorage.setItem('using_turn_only', 'true');
+    return turnOnlyRtcConfiguration;
+  } else {
+    console.log('[WebRTC] Using standard configuration for normal network conditions');
+    window.localStorage.setItem('using_turn_only', 'false');
+    return rtcConfiguration.value;
+  }
+}
+
+// بدء مراقبة جودة الاتصال
+function startConnectionQualityMonitoring(pc: RTCPeerConnection) {
+  if (connectionQualityInterval) {
+    stopConnectionQualityMonitoring();
+  }
+  
+  console.log('[WebRTC] Started connection quality monitoring');
+  
+  connectionQualityInterval = window.setInterval(async () => {
+    // التحقق فقط إذا كان الاتصال نشطًا
+    if (pc && (pc.connectionState === 'connected')) {
+      await monitorConnectionQuality(pc);
+    } else {
+      console.log('[WebRTC] Skipping quality check - connection not active:', pc?.connectionState);
+    }
+  }, CONNECTION_QUALITY_CHECK_INTERVAL);
+}
+
+// إيقاف مراقبة جودة الاتصال
+function stopConnectionQualityMonitoring() {
+  if (connectionQualityInterval) {
+    clearInterval(connectionQualityInterval);
+    connectionQualityInterval = null;
+    console.log('[WebRTC] Stopped connection quality monitoring');
+  }
+}
+
+// مراقبة جودة الاتصال ومعالجة المشاكل
+async function monitorConnectionQuality(pc: RTCPeerConnection) {
+  try {
+    const stats = await pc.getStats();
+    let packetLossRate = 0;
+    let jitter = 0;
+    let roundTripTime = 0;
+    let hasAudioData = false;
+    
+    stats.forEach(report => {
+      // التحقق من جودة اتصال الصوت
+      if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+        // حساب فقد الحزم
+        if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
+          const totalPackets = report.packetsLost + report.packetsReceived;
+          if (totalPackets > 0) {
+            packetLossRate = (report.packetsLost / totalPackets) * 100;
+          }
+        }
+        
+        // الحصول على قيمة الجيتر (تذبذب الوقت)
+        if (report.jitter !== undefined) {
+          jitter = report.jitter * 1000; // تحويل إلى مللي ثانية
+        }
+        
+        hasAudioData = true;
+      }
+      
+      // قياس زمن الاستجابة
+      if (report.type === 'candidate-pair' && report.currentRoundTripTime !== undefined && report.selected) {
+        roundTripTime = report.currentRoundTripTime * 1000; // تحويل إلى مللي ثانية
+      }
+    });
+    
+    // تقييم جودة الاتصال إذا وجدت بيانات
+    if (hasAudioData) {
+      // معايير الجودة المنخفضة
+      const isPoorQuality = (
+        packetLossRate > 10 || // فقد أكثر من 10% من الحزم
+        jitter > 50 ||        // تذبذب أكثر من 50 مللي ثانية
+        roundTripTime > 500   // زمن استجابة أكثر من 500 مللي ثانية
+      );
+      
+      console.log(`[WebRTC] Connection quality metrics: packet loss=${packetLossRate.toFixed(2)}%, jitter=${jitter.toFixed(2)}ms, RTT=${roundTripTime.toFixed(2)}ms - Quality: ${isPoorQuality ? 'POOR' : 'GOOD'}`);
+      
+      // إجراء بناءً على نتيجة التقييم
+      if (isPoorQuality) {
+        consecutivePoorQualityCount++;
+        console.log(`[WebRTC] Poor connection quality detected (${consecutivePoorQualityCount}/${POOR_QUALITY_THRESHOLD})`);
+        
+        // إذا استمر ضعف الجودة لفترة كافية، انتقل إلى وضع TURN-only
+        if (consecutivePoorQualityCount >= POOR_QUALITY_THRESHOLD) {
+          const usingTurnOnly = window.localStorage.getItem('using_turn_only') === 'true';
+          
+          if (!usingTurnOnly) {
+            console.log('[WebRTC] Switching to TURN-only mode due to poor connection quality');
+            window.localStorage.setItem('last_conn_required_turn', 'true');
+            window.localStorage.setItem('last_turn_timestamp', Date.now().toString());
+            
+            // إذا كان التكوين الحالي ليس TURN-only، يمكننا إعادة التفاوض
+            if (pc && pc.iceConnectionState !== 'closed') {
+              console.log('[WebRTC] Renegotiating with TURN-only configuration');
+              rtcConfiguration.value = turnOnlyRtcConfiguration;
+              
+              // يمكن استخدام restartIce() لإعادة تشغيل إجراء ICE دون قطع الاتصال الحالي
+              // لكن يجب أن يكون ذلك جزءًا من عملية التفاوض من جديد
+              try {
+                isRestartingIce = true;
+                console.log('[WebRTC] Switching to TURN-only mode due to poor quality');
+                
+                // تحديث التكوين لاستخدام TURN-only
+                rtcConfiguration.value = turnOnlyRtcConfiguration;
+                
+                // بدلاً من محاولة إعادة الاتصال، نكتفي بتحديث التكوين
+                // سيتم استخدام التكوين الجديد في المحاولة التالية للاتصال
+                console.log('[WebRTC] Updated configuration to TURN-only for next connection attempt');
+                
+                // يمكن أيضًا محاولة إعادة تشغيل ICE إذا كان الاتصال لا يزال مفتوحًا
+                if (pc && pc.iceConnectionState !== 'failed' && pc.iceConnectionState !== 'disconnected' && pc.restartIce) {
+                  console.log('[WebRTC] Attempting to restart ICE with TURN-only config');
+                  try {
+                    pc.restartIce();
+                  } catch (iceErr) {
+                    console.error('[WebRTC] Failed to restart ICE:', iceErr);
+                  }
+                }
+              } catch (err) {
+                console.error('[WebRTC] Failed to update to TURN-only configuration:', err);
+              }
+            }
+          }
+        }
+      } else {
+        // إعادة تعيين العداد إذا كانت الجودة جيدة
+        consecutivePoorQualityCount = 0;
+      }
+    }
+  } catch (error) {
+    console.error('[WebRTC] Error monitoring connection quality:', error);
   }
 }
