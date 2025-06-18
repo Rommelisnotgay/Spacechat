@@ -49,8 +49,8 @@ export async function fetchTurnCredentialsFromAPI(): Promise<RTCConfiguration | 
 // Function to get dynamic credentials from server
 export async function fetchTurnCredentials(): Promise<RTCConfiguration | null> {
   try {
-    // Get API URL - use environment variable or default to current origin
-    const baseUrl = import.meta.env.VITE_API_URL || window.location.origin;
+    // استخدم نفس المصدر دائمًا لتجنب مشاكل CORS
+    const baseUrl = window.location.origin;
     
     // Log the URL we're trying to fetch from
     console.log(`Fetching TURN credentials from ${baseUrl}/api/turn-credentials`);

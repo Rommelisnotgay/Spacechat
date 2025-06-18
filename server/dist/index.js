@@ -17,24 +17,17 @@ const gameService_1 = require("./services/gameService");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 // الحصول على أصول CORS المسموح بها
-const getAllowedOrigins = () => {
-    if (process.env.NODE_ENV === 'production') {
-        const origins = [
-            'https://spacechat-live.up.railway.app',
-            'https://spacechat-live.railway.app',
-            'https://spacechat.live',
-            'https://www.spacechat.live'
-        ];
-        if (process.env.CLIENT_URL) {
-            origins.push(process.env.CLIENT_URL);
-        }
-        if (process.env.VERCEL_URL) {
-            origins.push(`https://${process.env.VERCEL_URL}`);
-        }
-        return origins;
-    }
-    return '*';
-};
+const getAllowedOrigins = () => [
+    'https://spacechat-live.up.railway.app',
+    'https://spacechat-live.railway.app',
+    'https://spacechat.live',
+    'https://www.spacechat.live',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://web-production-33e9dc.up.railway.app'
+];
 // دالة إنشاء وإرجاع السيرفر لاستخدامه في وضع العنقود
 function createServer(config = {}) {
     // تهيئة تطبيق Express مع إعدادات محسنة
@@ -132,25 +125,29 @@ function createServer(config = {}) {
     });
     // نقطة نهاية API لبيانات اعتماد خادم TURN
     app.get('/api/turn-credentials', (req, res) => {
-        const username = `${Date.now() + 86400}:spacechat`;
-        const credential = process.env.TURN_CREDENTIAL || 'temporary_credential';
+        // بيانات TURN/STUN مجانية وموثوقة
         res.json({
             success: true,
             rtcConfig: {
                 iceServers: [
                     {
                         urls: [
-                            'turns:global.relay.metered.ca:443',
-                            'turn:global.relay.metered.ca:443?transport=tcp',
-                            'turn:global.relay.metered.ca:80?transport=tcp',
-                            'turn:global.relay.metered.ca:80'
+                            'stun:stun.l.google.com:19302',
+                            'stun:stun1.l.google.com:19302',
+                            'stun:stun2.l.google.com:19302',
+                            'stun:stun3.l.google.com:19302',
+                            'stun:stun4.l.google.com:19302',
+                            'stun:stun.cloudflare.com:3478',
+                            'turn:openrelay.metered.ca:80',
+                            'turn:openrelay.metered.ca:443',
+                            'turns:openrelay.metered.ca:443',
+                            'turn:global.relay.metered.ca:80',
+                            'turn:global.relay.metered.ca:443',
+                            'turns:global.relay.metered.ca:443'
                         ],
-                        username: username,
-                        credential: credential
-                    },
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun.cloudflare.com:3478' }
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
                 ],
                 iceCandidatePoolSize: 15,
                 iceTransportPolicy: 'all',
@@ -160,7 +157,7 @@ function createServer(config = {}) {
         });
     });
     // تقديم الملفات الثابتة من مجلد dist للعميل في الإنتاج
-    if (process.env.NODE_ENV === 'production') {
+    if (true) { // دائماً وضع الإنتاج
         // إضافة تحكم في التخزين المؤقت للأصول الثابتة
         app.use(express_1.default.static(path_1.default.join(__dirname, '../../client/dist'), {
             maxAge: '1d',
@@ -277,12 +274,12 @@ function createServer(config = {}) {
 }
 // تشغيل السيرفر الرئيسي عندما يتم تشغيل هذا الملف مباشرة
 if (require.main === module) {
-    const PORT = process.env.PORT || 3000;
+    const PORT = 8080;
     // إنشاء وتشغيل السيرفر
     const { server } = createServer();
     server.listen(PORT, () => {
         console.log(`SpaceChat.live Server optimized for high traffic running on port ${PORT}`);
-        console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-        console.log(`Process ID: ${process.pid}, CPU Cores: ${os_1.default.cpus().length}`);
+        console.log(`Environment: production`);
+        console.log(`Process ID: ${os_1.default.cpus().length}`);
     });
 }

@@ -479,6 +479,12 @@ class UserService {
     getAllActiveUsers() {
         return this.activeUsers;
     }
+    /**
+     * الحصول على وقت آخر نشاط للمستخدم
+     */
+    getLastActivity(userId) {
+        return this.userLastSeen.get(userId);
+    }
 }
 // إنشاء مثيل واحد للخدمة (Singleton pattern)
 exports.userService = new UserService();

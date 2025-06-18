@@ -17,17 +17,9 @@ interface ServerConfig {
 }
 
 // الحصول على أصول CORS المسموح بها
-const getAllowedOrigins = () => [
-  'https://spacechat-live.up.railway.app',
-  'https://spacechat-live.railway.app',
-  'https://spacechat.live',
-  'https://www.spacechat.live',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'https://web-production-33e9dc.up.railway.app'
-];
+const getAllowedOrigins = () => {
+  return '*'; // السماح لأي origin بالوصول
+};
 
 // دالة إنشاء وإرجاع السيرفر لاستخدامه في وضع العنقود
 export function createServer(config: ServerConfig = {}) {
@@ -47,7 +39,7 @@ export function createServer(config: ServerConfig = {}) {
   // خيارات Socket.IO الأساسية
   const socketOptions = {
     cors: {
-      origin: getAllowedOrigins(),
+      origin: '*', // السماح لأي origin بالوصول
       methods: ['GET', 'POST'],
       credentials: true
     },
@@ -72,7 +64,7 @@ export function createServer(config: ServerConfig = {}) {
 
   // الوسائط
   app.use(cors({
-    origin: getAllowedOrigins(),
+    origin: '*', // السماح لأي origin بالوصول
     credentials: true
   }));
 
@@ -309,7 +301,7 @@ export function createServer(config: ServerConfig = {}) {
 
 // تشغيل السيرفر الرئيسي عندما يتم تشغيل هذا الملف مباشرة
 if (require.main === module) {
-  const PORT = 8080;
+  const PORT = process.env.PORT || 8080;
   // إنشاء وتشغيل السيرفر
   const { server } = createServer();
   server.listen(PORT, () => {

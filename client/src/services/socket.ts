@@ -1,20 +1,19 @@
 import { ref, onMounted, onUnmounted, getCurrentInstance } from 'vue';
 import { io, Socket } from 'socket.io-client';
 
-// Determine the API URL based on environment
+// تحديد عنوان API بناءً على البيئة
 const getApiUrl = () => {
-  // In production, use the same domain (as the server serves the client)
+  // في الإنتاج، استخدم نفس النطاق (حيث يقدم الخادم العميل)
   if (import.meta.env.PROD) {
-    // When running on Railway, the client is served by the server,
-    // so we use relative URL in production
+    // عند التشغيل على Railway أو أي استضافة أخرى
     return window.location.origin;
   }
   
-  // For development, use the configured API URL or default
-  return import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  // للتطوير، استخدم عنوان API المكون أو الافتراضي مع المنفذ 8080
+  return import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8080`;
 };
 
-// Socket instance
+// مثيل Socket
 const socket = ref<Socket | null>(null);
 const userId = ref<string | null>(null);
 const isConnected = ref(false);
