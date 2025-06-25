@@ -5,6 +5,11 @@ interface ImportMetaEnv {
   readonly VITE_API_URL: string
   readonly VITE_SERVER_PORT: string
   
+  // EXPRESS TURN Credentials (Primary)
+  readonly VITE_EXPRESS_TURN_SERVER: string
+  readonly VITE_EXPRESS_TURN_USERNAME: string
+  readonly VITE_EXPRESS_TURN_CREDENTIAL: string
+  
   // Twilio TURN Credentials
   readonly VITE_TWILIO_TURN_USERNAME: string
   readonly VITE_TWILIO_TURN_CREDENTIAL: string

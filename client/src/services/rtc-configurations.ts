@@ -7,6 +7,11 @@
  */
 import axios from 'axios';
 
+// بيانات خادم EXPRESS TURN - الخادم الأساسي
+const EXPRESS_TURN_SERVER = "relay1.expressturn.com:3480";
+const EXPRESS_TURN_USERNAME = "000000002066212417";
+const EXPRESS_TURN_CREDENTIAL = "j597+kGrhV4Tk8NjtWS1Rwwth00=";
+
 // بيانات خادم TURN - استيراد من متغيرات البيئة أو استخدام قيم احتياطية
 // SECURITY: These are intentionally obfuscated/empty as they are loaded dynamically
 // from the server or .env files in production
@@ -113,10 +118,16 @@ export async function fetchTurnCredentials(): Promise<RTCConfiguration | null> {
   }
 }
 
-// تحديث الإعداد القياسي باستخدام بيانات اعتماد من الخادم
+// تحديث الإعداد القياسي باستخدام خادم EXPRESS TURN الرئيسي
 export const standardRtcConfiguration: RTCConfiguration = {
   iceServers: [
-    // STUN servers (public & free)
+    // EXPRESS TURN server (primary)
+    {
+      urls: [`turn:${EXPRESS_TURN_SERVER}`],
+      username: EXPRESS_TURN_USERNAME,
+      credential: EXPRESS_TURN_CREDENTIAL
+    },
+    // STUN servers (public & free - للدعم الإضافي)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' }
@@ -136,6 +147,12 @@ const XIRSYS_TURN_CREDENTIAL = "";
 // تكوين موسع يشمل عدة خوادم TURN
 export const enhancedTurnConfiguration: RTCConfiguration = {
   iceServers: [
+    // EXPRESS TURN server (primary)
+    {
+      urls: [`turn:${EXPRESS_TURN_SERVER}`],
+      username: EXPRESS_TURN_USERNAME,
+      credential: EXPRESS_TURN_CREDENTIAL
+    },
     // Google STUN (free)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -148,12 +165,32 @@ export const enhancedTurnConfiguration: RTCConfiguration = {
 };
 
 // TURN-only configuration for difficult networks and restrictive firewalls
-export const turnOnlyRtcConfiguration: RTCConfiguration = enhancedTurnConfiguration;
+export const turnOnlyRtcConfiguration: RTCConfiguration = {
+  iceServers: [
+    // EXPRESS TURN server (primary) - لضمان عمل الاتصال في الشبكات المقيدة
+    {
+      urls: [`turn:${EXPRESS_TURN_SERVER}`],
+      username: EXPRESS_TURN_USERNAME,
+      credential: EXPRESS_TURN_CREDENTIAL
+    }
+  ],
+  iceCandidatePoolSize: 15,
+  iceTransportPolicy: 'relay', // استخدام relay فقط للشبكات الصعبة
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require'
+};
 
 // Fast connection configuration
 export const fastRtcConfiguration: RTCConfiguration = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
+    // EXPRESS TURN server (primary) for reliable connections
+    {
+      urls: [`turn:${EXPRESS_TURN_SERVER}`],
+      username: EXPRESS_TURN_USERNAME,
+      credential: EXPRESS_TURN_CREDENTIAL
+    },
+    // Fast STUN server
+    { urls: 'stun:stun.l.google.com:19302' }
   ],
   iceCandidatePoolSize: 8,
   iceTransportPolicy: 'all',
@@ -174,6 +211,10 @@ export const localRtcConfiguration: RTCConfiguration = {
 
 // جلب التكوين الأمثل بناءً على ظروف الشبكة
 export async function getOptimalRtcConfiguration(): Promise<RTCConfiguration> {
+  // دائمًا استخدم التكوين القياسي أولاً (الذي يتضمن خادم EXPRESS TURN الجديد)
+  return standardRtcConfiguration;
+  
+  /* تم تعطيل الكود التالي لأننا نستخدم خادم EXPRESS TURN كخيار افتراضي موثوق
   try {
     // أولاً محاولة الحصول على البيانات من الخادم
     if (!hasFetchedCredentials) {
@@ -195,4 +236,5 @@ export async function getOptimalRtcConfiguration(): Promise<RTCConfiguration> {
     console.error('Error in getOptimalRtcConfiguration, using standard config');
     return standardRtcConfiguration;
   }
+  */
 }

@@ -1,6 +1,11 @@
 import crypto from 'crypto';
 import axios from 'axios';
 
+// EXPRESS TURN server configuration
+const EXPRESS_TURN_SERVER = "relay1.expressturn.com:3480";
+const EXPRESS_TURN_USERNAME = "000000002066212417";
+const EXPRESS_TURN_CREDENTIAL = "j597+kGrhV4Tk8NjtWS1Rwwth00=";
+
 // Dynamic TURN server credentials generation
 export function generateTurnCredentials(): {
   username: string;
@@ -8,9 +13,9 @@ export function generateTurnCredentials(): {
   ttl: number;
   timestamp: number;
 } {
-  // استخدام بيانات اعتماد من متغيرات البيئة، أو استخدام قيم افتراضية للنموذج المفتوح
-  const username = process.env.METERED_TURN_USERNAME || 'openrelayproject';
-  const credential = process.env.METERED_TURN_CREDENTIAL || 'openrelayproject';
+  // استخدام بيانات اعتماد من متغيرات البيئة، أو استخدام قيم خادم EXPRESS TURN
+  const username = process.env.EXPRESS_TURN_USERNAME || EXPRESS_TURN_USERNAME;
+  const credential = process.env.EXPRESS_TURN_CREDENTIAL || EXPRESS_TURN_CREDENTIAL;
   
   return {
     username,
@@ -106,6 +111,12 @@ export async function getRtcConfiguration(): Promise<{
   // Base configuration - تكوين معزز للعمل عبر أي شبكات
   const standardConfig: RTCConfiguration = {
     iceServers: [
+      // EXPRESS TURN server (primary)
+      {
+        urls: [`turn:${EXPRESS_TURN_SERVER}`],
+        username: EXPRESS_TURN_USERNAME,
+        credential: EXPRESS_TURN_CREDENTIAL
+      },
       // STUN servers - خوادم متنوعة من مصادر مختلفة لزيادة احتمالية الاتصال
       {
         urls: [
@@ -117,7 +128,7 @@ export async function getRtcConfiguration(): Promise<{
           'stun:stun.cloudflare.com:3478'
         ]
       },
-      // TURN servers - اضافة نقاط نهاية متعددة لتفادي القيود الشبكية
+      // TURN servers - اضافة نقاط نهاية متعددة لتفادي القيود الشبكية (احتياطي)
       {
         urls: [
           'turn:openrelay.metered.ca:80',
@@ -132,8 +143,8 @@ export async function getRtcConfiguration(): Promise<{
           'turns:global.relay.metered.ca:443',
           'turns:global.relay.metered.ca:443?transport=tcp'
         ],
-        username: credentials.username,
-        credential: credentials.credential
+        username: process.env.METERED_TURN_USERNAME || 'openrelayproject',
+        credential: process.env.METERED_TURN_CREDENTIAL || 'openrelayproject'
       }
     ],
     iceCandidatePoolSize: 15,

@@ -159,25 +159,34 @@ export function createServer(config: ServerConfig = {}) {
 
   // نقطة نهاية API لبيانات اعتماد خادم TURN
   app.get('/api/turn-credentials', (req, res) => {
-    // بيانات TURN/STUN مجانية وموثوقة
+    // بيانات EXPRESS TURN/STUN موثوقة
     res.json({
       success: true,
       rtcConfig: {
         iceServers: [
+          // EXPRESS TURN server (primary)
+          {
+            urls: [
+              'turn:relay1.expressturn.com:3480'
+            ],
+            username: '000000002066212417',
+            credential: 'j597+kGrhV4Tk8NjtWS1Rwwth00='
+          },
+          // STUN servers (fallback)
           {
             urls: [
               'stun:stun.l.google.com:19302',
               'stun:stun1.l.google.com:19302',
               'stun:stun2.l.google.com:19302',
-              'stun:stun3.l.google.com:19302',
-              'stun:stun4.l.google.com:19302',
-              'stun:stun.cloudflare.com:3478',
+              'stun:stun.cloudflare.com:3478'
+            ]
+          },
+          // Metered TURN servers (fallback)
+          {
+            urls: [
               'turn:openrelay.metered.ca:80',
               'turn:openrelay.metered.ca:443',
-              'turns:openrelay.metered.ca:443',
-              'turn:global.relay.metered.ca:80',
-              'turn:global.relay.metered.ca:443',
-              'turns:global.relay.metered.ca:443'
+              'turns:openrelay.metered.ca:443'
             ],
             username: 'openrelayproject',
             credential: 'openrelayproject'
