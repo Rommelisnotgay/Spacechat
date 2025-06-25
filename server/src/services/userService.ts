@@ -21,9 +21,9 @@ class UserService {
   private readonly USER_TIMEOUT = 600000; // 600 ثانية (10 دقائق) - زيادة مهلة عدم النشاط
   private readonly RATE_LIMIT_WINDOW = 30000; // 30 ثانية - تقليل نافذة الحد لتحسين الأداء
   private readonly MAX_JOINS_PER_WINDOW = 20; // زيادة الحد الأقصى للانضمامات للسماح بمزيد من المحاولات
-  private readonly MAX_QUEUE_WAIT_TIME = 90000; // 90 ثانية كحد أقصى لوقت الانتظار
-  private readonly MAX_MATCHING_ATTEMPTS = 15; // زيادة من 10 إلى 15 لزيادة فرص المطابقة
-  private readonly WAIT_TIME_WEIGHT = 15000; // تقليل من 20000 إلى 15000 لتسريع المطابقة
+  private readonly MAX_QUEUE_WAIT_TIME = 60000; // تقليل من 90 إلى 60 ثانية كحد أقصى لوقت الانتظار
+  private readonly MAX_MATCHING_ATTEMPTS = 20; // زيادة من 15 إلى 20 لزيادة فرص المطابقة
+  private readonly WAIT_TIME_WEIGHT = 10000; // تقليل من 15000 إلى 10000 لتسريع المطابقة
   private readonly DEBUG = false; // تعطيل التصحيح في الإنتاج
   
   // مفاتيح Redis المستخدمة للتخزين المؤقت
@@ -323,9 +323,9 @@ class UserService {
     // إنشاء مقاييس لتتبع أداء المطابقة
     const startTime = Date.now();
 
-    // تحسين: تقسيم قائمة الانتظار إلى دفعات لتحسين الأداء مع أعداد كبيرة من المستخدمين
-    // هذا يمكن أن يعالج حتى 2000 طلب/الثانية
-    const batchSize = Math.min(50, Math.ceil(this.userQueue.length / 4));
+    // تحسين: تقسيم قائمة الانتظار إلى دفعات للسماح بمعالجة أسرع مع أعداد كبيرة من المستخدمين
+    // زيادة حجم الدفعة لتسريع المطابقة في الشبكات المزدحمة
+    const batchSize = Math.min(100, Math.ceil(this.userQueue.length / 2));
     
     // حساب أوزان وقت الانتظار لكل مستخدم في القائمة
     // هذا يعطي الأولوية للمستخدمين الذين انتظروا لفترة أطول
@@ -333,12 +333,14 @@ class UserService {
       const waitTime = Date.now() - user.joinTime;
       // حساب الوزن بناءً على وقت الانتظار (انتظار أطول = وزن أعلى)
       const attemptCount = this.matchingAttempts.get(user.userId) || 0;
-      const attemptBonus = Math.min(attemptCount * 2, 10); // وزن إضافي للمحاولات السابقة (الحد الأقصى 10)
+      // زيادة الوزن الاضافي للمحاولات السابقة
+      const attemptBonus = Math.min(attemptCount * 5, 20); // زيادة وزن المحاولات السابقة 
+      // الوزن الإجمالي = وقت الانتظار + بونص المحاولات
       const weight = Math.floor(waitTime / this.WAIT_TIME_WEIGHT) + attemptBonus;
-    
+      
       return { 
         user, 
-        weight, 
+        weight, // الوزن الكلي للمستخدم
         waitTime,
         attemptCount 
       };
@@ -351,8 +353,7 @@ class UserService {
     let matchCount = 0;
     const matchedUsers = new Set<string>();
   
-    // تحسين: معالجة فقط الدفعة الأولى من المستخدمين ذوي الأولوية العالية
-    // هذا يقلل من وقت المعالجة بشكل كبير ويسمح بمعالجة حتى 200 اتصال متزامن
+    // معالجة دفعة أكبر من المستخدمين ذوي الأولوية العالية
     const batchToProcess = weightedUsers.slice(0, batchSize);
     
     // البدء بالمستخدمين ذوي الأولوية العالية
@@ -368,7 +369,8 @@ class UserService {
       // الحصول على محاولات المطابقة أو تهيئتها لهذا المستخدم
       const user1Attempts = this.matchingAttempts.get(user1.userId) || 0;
     
-      // إذا وصل المستخدم إلى الحد الأقصى من المحاولات، تخطيه
+      // تسريع المطابقة لمن انتظر طويلاً - زيادة عدد المحاولات للمستخدمين ذوي الانتظار الطويل
+      // وإخطار المستخدم بأنه قد انتظر طويلاً
       if (user1Attempts >= this.MAX_MATCHING_ATTEMPTS) {
         // إخطار المستخدم بأنه قد انتظر طويلاً
         const userInfo = this.activeUsers.get(user1.userId);
@@ -380,6 +382,7 @@ class UserService {
         
           // إزالة من القائمة
           this.userQueue = this.userQueue.filter(u => u.userId !== user1.userId);
+          this.matchingAttempts.delete(user1.userId);
         }
         continue;
       }
@@ -388,11 +391,10 @@ class UserService {
       this.matchingAttempts.set(user1.userId, user1Attempts + 1);
     
       // معالجة خاصة للمستخدمين - مرونة أكبر في معايير المطابقة بناءً على وقت الانتظار
-      const isLongWaiting = user1Entry.waitTime > this.MAX_QUEUE_WAIT_TIME / 2;
-      const isMediumWaiting = user1Entry.waitTime > this.MAX_QUEUE_WAIT_TIME / 4;
+      const isLongWaiting = user1Entry.waitTime > this.MAX_QUEUE_WAIT_TIME / 3; // تغيير من 2 إلى 3
+      const isMediumWaiting = user1Entry.waitTime > this.MAX_QUEUE_WAIT_TIME / 5; // تغيير من 4 إلى 5
     
-      // تحسين: استخدام مطابقة أسرع لدعم 200 غرفة لعب
-      // بدلاً من البحث عن أفضل مطابقة، نقبل أول مطابقة مقبولة
+      // تحسين: استخدام مطابقة أسرع
       for (const user2Entry of weightedUsers) {
         // لا تطابق مع النفس أو مع المستخدمين الذين تمت مطابقتهم بالفعل
         if (user1Entry === user2Entry || matchedUsers.has(user2Entry.user.userId)) continue;
@@ -402,8 +404,7 @@ class UserService {
         // تخطي الإدخالات غير الصالحة
         if (!user2 || !user2.userId || !this.activeUsers.has(user2.userId)) continue;
       
-        // التحقق من التوافق بناءً على التفضيلات
-        // إذا كان المستخدم قد انتظر لفترة طويلة، كن أكثر مرونة في التوافق
+        // التحقق من التوافق بناءً على التفضيلات - زيادة المرونة لمن انتظر طويلاً
         if (this.areUsersCompatible(user1, user2, isLongWaiting, isMediumWaiting)) {
           // وضع علامة على كلا المستخدمين كمتطابقين 
           matchedUsers.add(user1.userId);
@@ -472,11 +473,11 @@ class UserService {
   
     // تحسين معدل معالجة القائمة - معالجة أسرع لدعم 2000 طلب في الثانية
     if (matchCount > 0 && this.userQueue.length >= 2) {
-      setTimeout(() => this.processQueue(io), 250); // تأخير أقصر لزيادة معدل المطابقة
+      setTimeout(() => this.processQueue(io), 100); // تأخير أقصر لزيادة معدل المطابقة (من 250 إلى 100)
     } 
     // إذا لم يتم العثور على مطابقة ولكن لدينا مستخدمين في قائمة الانتظار، حاول مرة أخرى بعد تأخير أقصر
     else if (matchCount === 0 && this.userQueue.length >= 2) {
-      setTimeout(() => this.processQueue(io), 500);
+      setTimeout(() => this.processQueue(io), 200); // تأخير أقصر (من 500 إلى 200)
     }
   
     // قم بتشغيل فحص دوري لإشعار المستخدمين الذين انتظروا لفترة طويلة
@@ -484,30 +485,49 @@ class UserService {
   }
 
   /**
-   * التحقق من توافق المستخدمين بناءً على تفضيلاتهم
+   * التحقق من توافق مستخدمين بناءً على تفضيلاتهم
+   * مع زيادة المرونة لذوي أوقات الانتظار الطويلة
    */
   private areUsersCompatible(user1: QueueUser, user2: QueueUser, useFlexibleMatching = false, useMediumFlexibleMatching = false): boolean {
-    // إذا كان المستخدم قد انتظر لفترة طويلة، تخطى التحقق من التوافق
-    if (useFlexibleMatching) {
-      return true;
-    }
-
-    // تم تعطيل التحقق من توافق الاهتمامات (vibe) - الفايب للعرض في الواجهة فقط
-    const compatibleVibes = true; // دائمًا متوافق بغض النظر عن قيمة الفايب
+    try {
+      // أي المستخدمين ذوي الحالة "any" يمكن مطابقتهم مع أي مستخدم آخر
+      if (user1.vibe === 'any' || user2.vibe === 'any') {
+        return true;
+      }
       
-    // لا داعي للتحقق من عدم التوافق لأننا نعتبر جميع الفايبات متوافقة الآن
-    
-    // إذا لم يكن هناك تفضيلات محددة، فالمستخدمون متوافقون
-    if (!user1.preferences && !user2.preferences) {
+      // إذا كان المستخدم قد انتظر لفترة طويلة، كن أكثر مرونة في المطابقة
+      if (useFlexibleMatching) {
+        // نتجاهل التفضيلات تمامًا ونقوم بالمطابقة مع أي مستخدم متاح
+        return true;
+      }
+      
+      // لمستخدمي الانتظار المتوسط، يمكننا استخدام معايير أخف
+      if (useMediumFlexibleMatching) {
+        // فقط تحقق من أن التفضيلات غير متعارضة
+        const incompatibleVibes = [
+          ['serious', 'fun'], // لا تطابق serious مع fun
+          ['romantic', 'friendship'] // لا تطابق romantic مع friendship
+        ];
+        
+        // التحقق من عدم وجود تفضيلات متناقضة
+        for (const [vibe1, vibe2] of incompatibleVibes) {
+          if ((user1.vibe === vibe1 && user2.vibe === vibe2) || 
+              (user1.vibe === vibe2 && user2.vibe === vibe1)) {
+            return false;
+          }
+        }
+        
+        // مطابقة كل التفضيلات الأخرى
+        return true;
+      }
+      
+      // للمستخدمين ذوي الانتظار القصير، استخدام مطابقة دقيقة
+      return user1.vibe === user2.vibe;
+    } catch (error) {
+      console.error('Error in areUsersCompatible:', error);
+      // مطابقة آمنة في حالة الخطأ
       return true;
     }
-    
-    // في حالة المطابقة المتوسطة المرنة للمستخدمين الذين انتظروا لفترة متوسطة
-    if (useMediumFlexibleMatching) {
-      return true;
-    }
-    
-    return true; // بشكل افتراضي يكون المستخدمون متوافقين
   }
 
   /**

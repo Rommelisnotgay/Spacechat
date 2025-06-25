@@ -71,13 +71,20 @@ export function createServer(config: ServerConfig = {}) {
       credentials: true
     },
     transports: ['websocket', 'polling'],
-    pingInterval: 25000,
-    pingTimeout: 60000,
-    connectTimeout: 45000,
+    pingInterval: 20000,
+    pingTimeout: 30000,
+    connectTimeout: 30000,
     maxHttpBufferSize: 1e6,
     allowEIO3: true,
     perMessageDeflate: {
       threshold: 1024,
+    },
+    upgradeTimeout: 15000,
+    cleanupEmptyChildNamespaces: true,
+    httpCompression: true,
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2000,
+      skipMiddlewares: true,
     },
     ...(config.socketOpts || {})
   };

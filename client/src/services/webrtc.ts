@@ -418,9 +418,9 @@ export function useWebRTC(): WebRTCHook {
       const enhancedConfig = {
         ...rtcConfiguration.value,
         sdpSemantics: 'unified-plan',
-        // زيادة مجموعة المرشحين لتحسين فرص الاتصال
-        iceCandidatePoolSize: 20,
-        // تمكين التراجع إلى TCP عند الحاجة (قد يكون أبطأ ولكن أكثر موثوقية عبر بعض الشبكات)
+        // تقليل مجموعة المرشحين لتسريع عملية التوافق 
+        iceCandidatePoolSize: 5,
+        // استخدام جميع وسائط النقل لزيادة فرص الاتصال (مع تفضيل خادم EXPRESS TURN)
         iceTransportPolicy: 'all' as RTCIceTransportPolicy
       };
 
@@ -2028,7 +2028,7 @@ export function useWebRTC(): WebRTCHook {
     }
     
     // تقليل وقت الانتظار لتسريع عملية التبديل بين التكوينات
-    const quickTimeout = 5000; // 5 ثواني فقط لتجربة التكوين الأول
+    const quickTimeout = 3000; // 3 ثواني فقط لتجربة التكوين الأول (تقليل من 5 إلى 3 ثواني)
     
     // Set a quick first timeout to try fast configuration quickly
     (window as any).__webrtcConnectionTimeout = setTimeout(() => {
@@ -2069,7 +2069,7 @@ export function useWebRTC(): WebRTCHook {
               }, 200);
             }
         }
-        }, 5000); // 5 ثواني إضافية للتكوين TURN
+        }, 3000); // 3 ثواني إضافية للتكوين TURN (تقليل من 5 إلى 3 ثواني)
       }
     }, quickTimeout);
   }

@@ -132,10 +132,10 @@ export const standardRtcConfiguration: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' }
   ],
-  iceCandidatePoolSize: 15,
-  iceTransportPolicy: 'all',
-  bundlePolicy: 'max-bundle',
-  rtcpMuxPolicy: 'require'
+  iceCandidatePoolSize: 5,       // تقليل من 15 إلى 5 لتسريع عملية التفاوض
+  iceTransportPolicy: 'all',     // السماح بجميع أنواع الاتصالات
+  bundlePolicy: 'max-bundle',    // تحسين استخدام الموارد
+  rtcpMuxPolicy: 'require'       // إلزامي للأداء الأفضل
 };
 
 // SECURITY: Placeholders only - actual credentials loaded dynamically
