@@ -4,7 +4,34 @@
     <meta charset="UTF-8">
     <link rel="icon" href="./favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <title>SpaceChat.live</title>
+    <script>
+      // Safer way to disable Vue Devtools in production
+      // Create empty object with empty functions instead of null
+      window.__VUE_DEVTOOLS_GLOBAL_HOOK__ = { 
+        Vue: undefined,
+        on: function() {},
+        once: function() {},
+        off: function() {},
+        emit: function() {}
+      };
+      
+      // Prevent console access
+      (function() {
+        try {
+          // Disable console.log for security
+          if (window.location.hostname !== 'localhost' && 
+              window.location.hostname !== '127.0.0.1') {
+            // Safe console override with noop functions
+            var noop = function() {};
+            console.log = noop;
+            console.debug = noop;
+            console.info = noop;
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -17,7 +17,7 @@ export function useActivityTracker() {
   
   // ثوابت
   const ACTIVITY_THROTTLE = 30000; // 30 ثانية بين تحديثات النشاط
-  const INACTIVITY_THRESHOLD = 300000; // 5 دقائق قبل اعتبار المستخدم غير نشط
+  const INACTIVITY_THRESHOLD = 1800000; // 30 دقيقة قبل اعتبار المستخدم غير نشط
   
   // متغيرات للتتبع
   let lastActivityUpdate = 0;

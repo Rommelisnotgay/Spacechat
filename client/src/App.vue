@@ -9,6 +9,23 @@ import { RouterView } from 'vue-router'
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useActivityTracker } from './services/activityTracker';
 
+// Configure app for production
+if (import.meta.env.PROD) {
+  // Global error handler
+  window.addEventListener('error', (event) => {
+    // We can log critical errors to a service if needed
+    // but don't show them to users in production
+    event.preventDefault();
+    return true;
+  });
+  
+  // Handle promise rejections
+  window.addEventListener('unhandledrejection', (event) => {
+    event.preventDefault();
+    return true;
+  });
+}
+
 // تضمين نظام تتبع النشاط
 const { isActive } = useActivityTracker();
 </script>

@@ -10,6 +10,33 @@ import { userService } from './services/userService';
 import { gameService } from './services/gameService';
 import path from 'path';
 import os from 'os';
+import axios from 'axios';
+
+// Suppress console logs in production mode
+if (process.env.NODE_ENV === 'production') {
+  // Store original console methods
+  const originalConsoleLog = console.log;
+  const originalConsoleInfo = console.info;
+  const originalConsoleWarn = console.warn;
+  const originalConsoleDebug = console.debug;
+  
+  // Only log critical errors in production
+  console.log = (...args: any[]) => {
+    // Allow logging server start message
+    if (typeof args[0] === 'string' && 
+        (args[0].includes('Server running') || 
+         args[0].includes('Environment: production'))) {
+      originalConsoleLog(...args);
+    }
+  };
+  
+  console.info = () => {};
+  console.warn = () => {};
+  console.debug = () => {};
+  
+  // Keep error logging for critical issues
+  // console.error stays as is
+}
 
 // تكوين السيرفر
 interface ServerConfig {
@@ -164,6 +191,58 @@ export function createServer(config: ServerConfig = {}) {
     });
   });
 
+  // نقطة نهاية API آمنة لبيانات اعتماد Metered TURN
+  app.get('/api/turn-credentials/metered', async (req, res) => {
+    try {
+      // استخدام API Key من متغير البيئة بدلاً من إرساله من العميل
+      const apiKey = process.env.METERED_API_KEY;
+      
+      // التحقق من وجود مفتاح API
+      if (!apiKey) {
+        // عدم كشف السبب الحقيقي للخطأ (عدم وجود المفتاح)
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Service unavailable' 
+        });
+      }
+      
+      // جلب البيانات من خدمة Metered
+      const response = await axios.get(
+        `https://spacetalk.metered.live/api/v1/turn/credentials`, 
+        { params: { apiKey } }
+      );
+      
+      // إرسال البيانات للعميل
+      if (response.data && Array.isArray(response.data)) {
+        return res.json({
+          success: true,
+          iceServers: response.data
+        });
+      } else {
+        // استخدام خوادم TURN الافتراضية إذا فشلت عملية الجلب
+        return res.json({
+          success: true,
+          iceServers: [
+            {
+              urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302'
+              ]
+            }
+          ]
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching Metered TURN credentials');
+      
+      // إرجاع رد خطأ آمن (لا يكشف تفاصيل الخطأ)
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to fetch TURN credentials'
+      });
+    }
+  });
+
   // تقديم الملفات الثابتة من مجلد dist للعميل في الإنتاج
   if (true) { // دائماً وضع الإنتاج
     // إضافة تحكم في التخزين المؤقت للأصول الثابتة
@@ -246,6 +325,50 @@ export function createServer(config: ServerConfig = {}) {
         }
       });
       
+      // Handle partner disconnection requests (skip, manual disconnect)
+      socket.on('disconnect-partner', (data: { reason: string }) => {
+        const partnerId = socket.data.partnerId;
+        
+        if (!partnerId) {
+          // No partner to disconnect from
+          socket.emit('disconnect-confirmed', { success: true });
+          return;
+        }
+        
+        // Get partner's socket info
+        const partnerInfo = userService.getUserInfo(partnerId);
+        if (partnerInfo) {
+          // Send specific event based on reason
+          if (data.reason === 'skip') {
+            // Notify partner they've been skipped
+            io.to(partnerInfo.socketId).emit('user-skipped', {
+              from: userId,
+              reason: 'skipped'
+            });
+          } else {
+            // Generic disconnect notification
+            io.to(partnerInfo.socketId).emit('user-disconnected', {
+              from: userId,
+              reason: data.reason || 'disconnected'
+            });
+          }
+        }
+        
+        // Clear the partner relationship on both sides
+        socket.data.partnerId = null;
+        
+        // If partner socket exists, clear their partner reference too
+        if (partnerInfo) {
+          const partnerSocket = io.sockets.sockets.get(partnerInfo.socketId);
+          if (partnerSocket) {
+            partnerSocket.data.partnerId = null;
+          }
+        }
+        
+        // Confirm disconnect to the requester
+        socket.emit('disconnect-confirmed', { success: true });
+      });
+      
       socket.on('join-queue', (data: { vibe?: string, preferences?: Record<string, any> }) => {
         let vibe = 'general';
         if (typeof data.vibe === 'string' && data.vibe.trim().length > 0) {
@@ -305,8 +428,9 @@ if (require.main === module) {
   // إنشاء وتشغيل السيرفر
   const { server } = createServer();
   server.listen(PORT, () => {
-    console.log(`SpaceChat.live Server optimized for high traffic running on port ${PORT}`);
+    // These critical logs will still be shown in production due to our console.log override
+    console.log(`SpaceChat.live Server running on port ${PORT} (${process.env.NODE_ENV || 'production'})`);
     console.log(`Environment: production`);
-    console.log(`Process ID: ${os.cpus().length}`);
+    console.log(`CPU cores: ${os.cpus().length}`);
   });
 }

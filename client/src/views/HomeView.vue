@@ -214,12 +214,13 @@
     </div>
 
     <!-- Filters Modal -->
-    <div v-if="isFiltersOpen" class="fixed inset-0 bg-black/50 flex items-center justify-center z-20 p-4">
+    <div v-if="isFiltersOpen" class="fixed inset-0 bg-black/50 flex items-center justify-center z-20 p-4"
+      @click.self="closeFilters">
       <div class="bg-gray-800 rounded-2xl p-6 w-full max-w-md max-h-[80vh] overflow-y-auto relative">
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-lg font-semibold text-emerald-400">Filters & Preferences</h2>
           <button
-            @click="isFiltersOpen = false"
+            @click="closeFilters"
             class="text-gray-400 hover:text-white text-xl"
           >
             ✕
@@ -474,11 +475,22 @@
         </div>
       </div>
     </div>
+
+    <GameInviteNotification 
+      v-if="activeInvitation"
+      :gameType="activeInvitation.gameType"
+      :from="activeInvitation.from"
+      :inviteId="activeInvitation.id"
+      @accept="handleGameInviteAccept"
+      @decline="handleGameInviteDecline"
+      @timeout="handleGameInviteTimeout"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick, Ref } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue';
+import type { Ref } from 'vue';
 import { useSocket } from '@/services/socket';
 import { useWebRTC } from '@/services/webrtc';
 import { useMicrophoneState } from '@/services/storage';
@@ -771,8 +783,46 @@ const toggleMute = async () => {
   }
 };
 
+// إضافة وظيفة لتنظيف البيانات قبل البحث عن شريك جديد
+const cleanupBeforeNewConnection = () => {
+  console.log('Cleaning up before new connection');
+  
+  // التحقق من حالة الاتصال الحالية
+  const currentState = webrtc.connectionState.value;
+  if (currentState !== 'new' && currentState !== 'closed') {
+    console.log(`Closing existing WebRTC connection in state: ${currentState}`);
+  }
+  
+  // إزالة بيانات الشريك السابق
+  partnerId.value = null;
+  partnerInfo.value = null;
+  
+  // إغلاق اتصال WebRTC الحالي
+  closeConnection();
+  
+  // مسح رسائل الدردشة السابقة
+  chatMessages.value = [];
+  
+  // إزالة أي رسائل خطأ
+  connectionError.value = '';
+  disconnectReason.value = '';
+  
+  // التأكد من إغلاق أي نوافذ مفتوحة
+  isChatOpen.value = false;
+  isGamesOpen.value = false;
+  
+  // إلغاء أي اشتراك في قائمة الانتظار السابقة
+  if (socket.value) {
+    socket.value.emit('leave-queue');
+    console.log('Left any existing queue');
+  }
+};
+
 const findNext = async () => {
   console.log('Finding next partner');
+  
+  // تنظيف البيانات قبل البدء - تم نقل هذا الجزء إلى وظيفة cleanupBeforeNewConnection
+  // لا حاجة لاستدعاء cleanupBeforeNewConnection هنا لأنها تُستدعى قبل استدعاء findNext
   
   // If we don't have microphone access yet, request it
   if (!localStream.value) {
@@ -798,8 +848,6 @@ const findNext = async () => {
     showRateLimitMessage('Please wait before trying again');
     return;
   }
-
-  // This section is redundant as we've already initialized the microphone above
   
   // Handle next partner request
   if (socket.value) {
@@ -810,8 +858,9 @@ const findNext = async () => {
       // Set flag to indicate we are actively skipping
       isSkippingToNewMatch.value = true;
       
-      // For the user who is skipping, we don't show the disconnecting state
-      // We'll just silently transition to searching
+      // CRITICAL: Skip the disconnecting state entirely for the user who initiated skip
+      // Go directly to searching state
+      connectionStatus.value = 'searching';
       
       // Emit the disconnect event with reason
       socket.value.emit('disconnect-partner', { reason: 'skip' });
@@ -819,40 +868,14 @@ const findNext = async () => {
       // Close current WebRTC connection
       closeConnection();
       
-      // Wait for the connection to fully close before proceeding
-      // This prevents race conditions when quickly changing partners
-      const ensureDisconnected = () => {
-        return new Promise<void>(resolve => {
-                      // Check if connection is fully closed
-            const checkConnection = () => {
-              if (webrtc.connectionState.value === 'closed') {
-                console.log('Connection successfully closed, proceeding to search');
-                resolve();
-              } else {
-                console.log(`Waiting for connection to close, current state: ${webrtc.connectionState.value}`);
-                setTimeout(checkConnection, 300);
-              }
-          };
-          
-          // Start checking after a short delay
-          setTimeout(checkConnection, 500);
-        });
-      };
-      
-      // Wait for connection to fully close
-      await ensureDisconnected();
-      
-      // Immediately transition to searching state
-      connectionStatus.value = 'searching';
-      
-      // Clear any previous error messages
-      connectionError.value = '';
-      
-      // Make sure to clear partner data
+      // Make sure to clear partner data immediately
       console.log('Clearing partner data from UI');
       partnerId.value = null;
       partnerInfo.value = null;
       chatMessages.value = [];
+      
+      // Clear any previous error messages
+      connectionError.value = '';
       
       console.log('Finding new partner with preferences');
       // Send request to join the waiting queue with user preferences
@@ -871,17 +894,21 @@ const findNext = async () => {
         isSkippingToNewMatch.value = false;
       }, 500);
     } else {
-      // No current partner, start search immediately
-      // Even if partnerId is null, ensure partnerInfo is also null
+      // No current partner
+      
+      // Make sure partner data is cleared
       partnerId.value = null;
       partnerInfo.value = null;
+      
+      // Always set connection status to searching, even if it's already in that state
       connectionStatus.value = 'searching';
       
       // Clear any previous error messages when starting a new search
       connectionError.value = '';
       
       console.log('Finding new partner with preferences');
-      // Send request to join the waiting queue with user preferences
+      // Always send the join-queue request, even if already searching
+      // This ensures we're actually in the queue on the server side
       socket.value.emit('join-queue', {
         vibe: selectedVibe.value,
         preferences: {
@@ -998,6 +1025,9 @@ const clearFilters = () => {
   blockedCountries.value = [];
   localStorage.removeItem('preferredCountries');
   localStorage.removeItem('blockedCountries');
+  
+  // استخدام دالة closeFilters للتأكد من حذف محتوى البحث وإغلاق القوائم المنسدلة
+  closeFilters();
 };
 
 const applyFilters = () => {
@@ -1008,6 +1038,14 @@ const applyFilters = () => {
   
   // Close filter window
   isFiltersOpen.value = false;
+  
+  // Clear search queries
+  countrySearchQuery.value = '';
+  blockedCountrySearchQuery.value = '';
+  
+  // Make sure dropdown menus are closed
+  showPreferredDropdown.value = false;
+  showBlockedDropdown.value = false;
   
   // Save settings
   saveFilterSettings();
@@ -1102,8 +1140,22 @@ const toggleDropdown = (type: string) => {
     showBlockedDropdown.value = false;
   } else if (type === 'preferred') {
     togglePreferredDropdown();
+    
+    // Reset search when opening the dropdown
+    if (showPreferredDropdown.value) {
+      countrySearchQuery.value = '';
+      filteredPreferredCountries.value = [...availableCountriesForPreferred.value];
+      updateDropdownPosition();
+    }
   } else if (type === 'blocked') {
     toggleBlockedDropdown();
+    
+    // Reset search when opening the dropdown
+    if (showBlockedDropdown.value) {
+      blockedCountrySearchQuery.value = '';
+      filteredBlockedCountries.value = [...availableCountriesForBlocked.value];
+      updateDropdownPosition();
+    }
   }
 };
 
@@ -1373,10 +1425,11 @@ onMounted(async () => {
     socket.value.on('user-skipped', (data: any) => {
       console.log('User skipped event received', data);
       
-      // Use unified handler for disconnection
+      // Use unified handler for disconnection with skip-specific reason
       handleConnectionStateChange('disconnecting', {
-        reason: 'disconnected',
-        message: 'The other user disconnected'
+        reason: 'skip',
+        message: 'The other user skipped this conversation',
+        skipDelay: false // Use the default delay to show disconnecting state
       });
     });
     
@@ -1448,13 +1501,20 @@ onMounted(async () => {
     // Request online count when component mounts
     socket.value.emit('get-online-count');
 
-    // إذا كان Auto-call مفعلًا، ابدأ اتصالًا تلقائيًا بعد 1 ثانية من تحميل الصفحة
+    // إذا كان Auto-call مفعلًا، ابدأ اتصالًا تلقائيًا بعد 2 ثانية من تحميل الصفحة
     setTimeout(() => {
       if (autoReconnect.value && connectionStatus.value === 'disconnected') {
         console.log('Auto-call is enabled - automatically finding a partner');
+        
+        // تنظيف البيانات قبل البدء
+        cleanupBeforeNewConnection();
+        
+        // تأكد من أن connectionStatus تتغير إلى 'searching' قبل استدعاء findNext
+        connectionStatus.value = 'searching';
+        // استدعاء findNext لبدء عملية البحث والمطابقة
         findNext();
       }
-    }, 1000);
+    }, 2000); // تغيير من 1000 إلى 2000 مللي ثانية
 
     // Add handler for queue join errors
     socket.value.on('queue-join-error', (data: any) => {
@@ -1475,13 +1535,12 @@ onMounted(async () => {
     socket.value?.on('game-invite', (data: { gameType: string; from: string; inviteId: string }) => {
       console.log(`[Game] Received game invitation for ${data.gameType} from ${data.from}`);
       
-      // Add to active invitations
-      gameInvitations.value.push({
+      // Set as active invitation - only show the most recent one
+      activeInvitation.value = {
         id: data.inviteId || `invite-${Date.now()}`,
         gameType: data.gameType,
-        from: data.from,
-        timestamp: Date.now()
-      });
+        from: data.from
+      };
       
       // Play game invitation sound (different from regular notifications)
       const gameInviteSound = new Audio('/sounds/game-invite.mp3');
@@ -1511,6 +1570,16 @@ onMounted(async () => {
         gameType: data.gameType,
         partnerId: data.from
       });
+      
+      // Dispatch a custom event to notify the games-modal component
+      // This will unblock the UI in the games-modal component
+      window.dispatchEvent(new CustomEvent('game-invitation-accepted', {
+        detail: {
+          gameType: data.gameType,
+          partnerId: data.from,
+          inviteId: data.inviteId
+        }
+      }));
     });
     
     socket.value?.on('game-invite-declined', (data: { from: string; inviteId: string }) => {
@@ -1526,6 +1595,21 @@ onMounted(async () => {
     socket.value?.on('game-join-confirmed', (data: { gameType: string; roomId: string }) => {
       console.log(`[Game] Join confirmed for game ${data.gameType} in room ${data.roomId}`);
       // The games modal will handle the actual game startup
+    });
+
+    // Handle invitation cancellation
+    socket.value?.on('game-invite-cancel', (data: { from: string; inviteId: string; gameType: string }) => {
+      console.log(`[Game] ${data.from} cancelled game invitation ${data.inviteId}`);
+      
+      // Remove the invitation if it's active
+      if (activeInvitation.value && activeInvitation.value.id === data.inviteId) {
+        activeInvitation.value = null;
+      }
+      
+      // Close the games modal if it's open
+      if (isGamesOpen.value) {
+        showToastMessage('Game invitation cancelled', 'info');
+      }
     });
   }
 
@@ -1608,6 +1692,7 @@ onBeforeUnmount(() => {
     socket.value.off('game-invite-accepted');
     socket.value.off('game-invite-declined');
     socket.value.off('game-invite-timeout');
+    socket.value.off('game-invite-cancel');
     socket.value.off('game-join-confirmed');
   }
 
@@ -1693,6 +1778,8 @@ const handleClickOutside = (event: MouseEvent) => {
         !preferredBtn.contains(target) && 
         !preferredDropdown.contains(target)) {
       showPreferredDropdown.value = false;
+      // Reset search when closing dropdown
+      countrySearchQuery.value = '';
     }
   }
   
@@ -1703,6 +1790,8 @@ const handleClickOutside = (event: MouseEvent) => {
         !blockedBtn.contains(target) && 
         !blockedDropdown.contains(target)) {
       showBlockedDropdown.value = false;
+      // Reset search when closing dropdown
+      blockedCountrySearchQuery.value = '';
     }
   }
 };
@@ -1737,7 +1826,16 @@ watch(autoReconnect, (newValue) => {
   // إذا تم تفعيل Auto-call وليس هناك اتصال حالي، ابدأ اتصالًا تلقائيًا
   if (newValue && connectionStatus.value === 'disconnected') {
     console.log('Auto-call enabled - automatically finding a partner');
-    findNext();
+    
+    // تأخير البحث لمدة 2 ثوانٍ وتغيير الحالة أولاً
+    setTimeout(() => {
+      // تنظيف البيانات قبل البدء
+      cleanupBeforeNewConnection();
+      
+      // تأكد من أن connectionStatus تتغير إلى 'searching' قبل استدعاء findNext
+      connectionStatus.value = 'searching';
+      findNext();
+    }, 2000);
   }
 });
 
@@ -1790,12 +1888,51 @@ const updateBlockedCountrySearch = () => {
     // If search input is empty, show all available countries
     filteredBlockedCountries.value = [...availableCountriesForBlocked.value];
   } else {
-    // Search countries by name or code
+    // Search countries by name, code, or flag (normalized for better language support)
     const query = blockedCountrySearchQuery.value.toLowerCase().trim();
-    filteredBlockedCountries.value = availableCountriesForBlocked.value.filter(country => 
-      country.name.toLowerCase().includes(query) || 
-      country.value.toLowerCase().includes(query)
-    );
+    filteredBlockedCountries.value = availableCountriesForBlocked.value.filter(country => {
+      // Normalize strings for better international text search
+      const countryName = country.name.toLowerCase();
+      const countryCode = country.value.toLowerCase();
+      const countryFlag = country.flag;
+      
+      // Check if query is in any of the country properties
+      return countryName.includes(query) || 
+             countryCode.includes(query) || 
+             countryFlag.includes(query) ||
+             // For Arabic and other languages where the search might be in reverse
+             query.includes(countryName) ||
+             // Check if the query contains the flag emoji
+             query.includes(countryFlag);
+    });
+  }
+};
+
+// Add function to search preferred countries
+const updateCountrySearch = () => {
+  if (!availableCountriesForPreferred.value) return;
+  
+  if (countrySearchQuery.value.trim() === '') {
+    // If search input is empty, show all available countries
+    filteredPreferredCountries.value = [...availableCountriesForPreferred.value];
+  } else {
+    // Search countries by name, code, or flag (normalized for better language support)
+    const query = countrySearchQuery.value.toLowerCase().trim();
+    filteredPreferredCountries.value = availableCountriesForPreferred.value.filter(country => {
+      // Normalize strings for better international text search
+      const countryName = country.name.toLowerCase();
+      const countryCode = country.value.toLowerCase();
+      const countryFlag = country.flag;
+      
+      // Check if query is in any of the country properties
+      return countryName.includes(query) || 
+             countryCode.includes(query) || 
+             countryFlag.includes(query) ||
+             // For Arabic and other languages where the search might be in reverse
+             query.includes(countryName) ||
+             // Check if the query contains the flag emoji
+             query.includes(countryFlag);
+    });
   }
 };
 
@@ -1880,9 +2017,15 @@ const handleConnectionStateChange = (
             setTimeout(() => {
               if (connectionStatus.value === 'disconnected' && autoReconnect.value) {
                 console.log('Auto-call: Starting new call automatically');
+                
+                // تنظيف البيانات قبل البدء
+                cleanupBeforeNewConnection();
+                
+                // تأكد من أن connectionStatus تتغير إلى 'searching' قبل استدعاء findNext
+                connectionStatus.value = 'searching';
                 findNext();
               }
-            }, 1000);
+            }, 2000); // تغيير من 1000 إلى 2000 مللي ثانية
           }
         }
       }, delayTime);
@@ -1907,13 +2050,18 @@ const handleInvitationAccept = (data: { inviteId: string; gameType: string; from
   // Remove the invitation from our list
   gameInvitations.value = gameInvitations.value.filter(invite => invite.id !== data.inviteId);
     
-    // Send acceptance to server
+  // Send acceptance to server
   if (socket.value) {
     socket.value.emit('game-invite-accept', {
       inviteId: data.inviteId,
       gameType: data.gameType,
       to: data.from
     });
+    
+    // Play a sound to indicate acceptance
+    const acceptSound = new Audio('/sounds/game-start.mp3');
+    acceptSound.volume = 0.5;
+    acceptSound.play().catch(err => console.log('Error playing sound', err));
     
     // Open games modal and set partner
     partnerId.value = data.from;
@@ -1924,6 +2072,16 @@ const handleInvitationAccept = (data: { inviteId: string; gameType: string; from
       gameType: data.gameType,
       partnerId: data.from
     });
+    
+    // Dispatch a custom event to notify the games-modal component
+    // This will unblock the UI in the games-modal component and start the game
+    window.dispatchEvent(new CustomEvent('game-invitation-accepted', {
+      detail: {
+        gameType: data.gameType,
+        partnerId: data.from,
+        inviteId: data.inviteId
+      }
+    }));
   }
 };
 
@@ -1989,6 +2147,84 @@ const showToastMessage = (message: string, type: 'success' | 'error' | 'info' = 
       document.body.removeChild(toast);
     }, 300);
   }, 3000);
+};
+
+// Handle game invitation decline
+const handleGameInviteDecline = (data: { inviteId: string; from: string; gameType?: string }) => {
+  console.log(`Declining game invitation ${data.inviteId} from ${data.from}`);
+  
+  // Clear the active invitation
+  activeInvitation.value = null;
+
+  // Send decline notification to partner
+  socket.value?.emit('game-invite-decline', {
+    to: data.from,
+    inviteId: data.inviteId
+  });
+
+  // Close the game modal if it was open for this invitation
+  if (isGamesOpen.value) {
+    // Check if there's an open game with this partner
+    if (partnerId.value === data.from) {
+      // Close the games modal completely
+      isGamesOpen.value = false;
+    }
+  }
+
+  // Play sound
+  const declineSound = new Audio('/sounds/click.mp3');
+  declineSound.volume = 0.3;
+  declineSound.play().catch(err => console.log('Error playing sound', err));
+};
+
+const activeInvitation = ref<{ id: string; gameType: string; from: string } | null>(null);
+
+const handleGameInviteAccept = (data: { inviteId: string; gameType: string; from: string }) => {
+  console.log(`Accepting game invitation ${data.inviteId} from ${data.from}`);
+  
+  // Clear the active invitation
+  activeInvitation.value = null;
+
+  // Send accept to server
+  socket.value?.emit('game-invite-accept', {
+    gameType: data.gameType,
+    to: data.from,
+    inviteId: data.inviteId
+  });
+
+  // Open the game modal
+  isGamesOpen.value = true;
+  
+  // Play sound
+  const acceptSound = new Audio('/sounds/game-start.mp3');
+  acceptSound.volume = 0.5;
+  acceptSound.play().catch(err => console.log('Error playing sound', err));
+};
+
+const handleGameInviteTimeout = (data: { inviteId: string }) => {
+  console.log(`Game invitation ${data.inviteId} timed out`);
+  
+  // Clear the active invitation
+  activeInvitation.value = null;
+  
+  // Close the game modal if it was opened for this invitation
+  const currentInvite = activeInvitation.value;
+  if (currentInvite && currentInvite.id === data.inviteId && isGamesOpen.value) {
+    isGamesOpen.value = false;
+  }
+};
+
+// وظيفة إغلاق نافذة الفلتر وإعادة ضبط حالة البحث
+const closeFilters = () => {
+  isFiltersOpen.value = false;
+  
+  // مسح محتوى حقول البحث
+  countrySearchQuery.value = '';
+  blockedCountrySearchQuery.value = '';
+  
+  // التأكد من إغلاق جميع القوائم المنسدلة
+  showPreferredDropdown.value = false;
+  showBlockedDropdown.value = false;
 };
 </script>
 

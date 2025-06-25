@@ -27,8 +27,17 @@ export default defineConfig({
     }
   },
   build: {
-    // Generate source maps for better debugging
-    sourcemap: true,
+    // Disable source maps in production for security and performance
+    sourcemap: false,
+    // Minify more aggressively in production
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,  // Remove console.* calls
+        drop_debugger: true, // Remove debugger statements
+        pure_funcs: ['console.log', 'console.debug', 'console.info']
+      }
+    },
     // Glitch environment considerations
     rollupOptions: {
       output: {
@@ -38,5 +47,10 @@ export default defineConfig({
         }
       }
     }
+  },
+  // Define global constants for the app
+  define: {
+    // Ensure NODE_ENV is set to 'production'
+    'process.env.NODE_ENV': JSON.stringify('production')
   }
 })

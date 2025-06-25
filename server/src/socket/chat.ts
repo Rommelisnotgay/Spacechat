@@ -27,8 +27,8 @@ const MAX_MESSAGES_PER_MINUTE = 30;
 // تخزين عدد الرسائل لكل مستخدم
 const messageRateLimits = new Map<string, { count: number, resetTime: number }>();
 
-// مفتاح سري للتحقق من صحة الرسائل (في بيئة الإنتاج، يجب تخزينه بشكل آمن)
-const MESSAGE_SECRET = 'spacetalk-server-verification-key';
+// Moved message secret to use environment variable with fallback
+const MESSAGE_SECRET = process.env.MESSAGE_SECRET || 'spacetalk-server-verification-key';
 
 // تمكين وضع التصحيح
 const DEBUG = true;
@@ -44,7 +44,7 @@ function checkRateLimit(userId: string): boolean {
     // أول رسالة للمستخدم
     messageRateLimits.set(userId, {
       count: 1,
-      resetTime: now + 60000 // إعادة ضبط بعد دقيقة
+      resetTime: now + 90000 // إعادة ضبط بعد دقيقة ونصف
     });
     return true;
   }
@@ -53,7 +53,7 @@ function checkRateLimit(userId: string): boolean {
   if (now > userLimit.resetTime) {
     messageRateLimits.set(userId, {
       count: 1,
-      resetTime: now + 60000
+      resetTime: now + 90000 // إعادة ضبط بعد دقيقة ونصف
     });
     return true;
   }
@@ -63,7 +63,7 @@ function checkRateLimit(userId: string): boolean {
   
   // إذا تجاوز الحد، رفض الرسالة
   if (userLimit.count > MAX_MESSAGES_PER_MINUTE) {
-    console.log(`Rate limit exceeded for user ${userId}: ${userLimit.count} messages in the last minute`);
+    console.log(`Rate limit exceeded for user ${userId}: ${userLimit.count} messages in the last minute and a half`);
     return false;
   }
   

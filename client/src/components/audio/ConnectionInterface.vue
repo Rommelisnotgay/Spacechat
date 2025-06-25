@@ -91,6 +91,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-chat'): void;
   (e: 'partner-connected', partnerId: string): void;
+  (e: 'searching'): void;
 }>();
 
 const { socket } = useSocket();
@@ -519,15 +520,18 @@ function disconnectPartner() {
     socket.value.emit('disconnect-partner', { reason: 'skip' });
     
     // When user initiates skip, don't show disconnecting state
-    // instead go straight to idle to prepare for next connection
+    // instead go straight to searching state to prepare for next connection
     partnerId.value = null;
-    status.value = 'idle';
+    status.value = 'searching';
     callActive.value = false;
     
     // Close WebRTC connection
     closeConnection();
     
     if (DEBUG) console.log('[ConnectionInterface] Disconnected from partner via skip');
+    
+    // Emit an event to notify parent component that we're searching for a new partner
+    emit('searching');
   }
 }
 

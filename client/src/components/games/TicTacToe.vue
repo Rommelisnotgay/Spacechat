@@ -1,19 +1,24 @@
 <template>
   <div class="w-full p-2">
     <!-- Game Header -->
-    <div class="flex justify-between items-center mb-4 game-header">
-      <h2 class="text-xl font-bold text-purple-400">Tic Tac Toe</h2>
-      <div class="text-white text-sm px-3 py-1 rounded-full game-status" 
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-bold text-purple-400">
+        <span class="hidden sm:inline">Tic Tac Toe</span>
+        <span class="sm:hidden">TicTacToe</span>
+      </h2>
+      <div class="text-white text-sm px-3 py-1 rounded-full backdrop-blur-sm shadow-lg" 
         :class="{
-          'bg-yellow-600/30': gameState === 'waiting',
-          'bg-green-600/30': isMyTurn && gameState === 'playing',
-          'bg-red-600/30': !isMyTurn && gameState === 'playing',
-          'bg-purple-600/30': winner
+          'bg-yellow-600/40 border border-yellow-500/30': gameState === 'waiting',
+          'bg-green-600/40 border border-green-500/30': isMyTurn && gameState === 'playing',
+          'bg-blue-600/40 border border-blue-500/30': !isMyTurn && gameState === 'playing',
+          'bg-purple-600/40 border border-purple-500/30': winner
         }">
-        <span v-if="gameState === 'waiting'" class="text-yellow-300 animate-pulse">
-          Waiting for partner...
+        <span v-if="gameState === 'waiting'" class="text-yellow-300 animate-pulse flex items-center">
+          <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full mr-2 animate-ping"></span>
+          Waiting...
         </span>
-        <span v-else-if="winner">
+        <span v-else-if="winner" class="flex items-center">
+          <span class="inline-block w-2 h-2 bg-purple-400 rounded-full mr-2"></span>
           {{ winner === playerSymbol 
             ? 'You Won! 🎉' 
             : winner === 'tie' 
@@ -21,17 +26,17 @@
               : 'You Lost! 😢' 
           }}
         </span>
-        <span v-else>
+        <span v-else class="flex items-center">
+          <span class="inline-block w-2 h-2 rounded-full mr-2" 
+                :class="{'bg-green-400': isMyTurn, 'bg-blue-400': !isMyTurn}"></span>
           {{ isMyTurn ? 'Your Turn' : "Partner's Turn" }}
         </span>
       </div>
     </div>
     
     <!-- Game Board -->
-    <div class="bg-gray-800/60 backdrop-blur-sm rounded-lg p-4 mb-4 game-board">
-      <div class="flex flex-col items-center" :class="[
-        {'opacity-70': gameState === 'waiting' || (!isMyTurn && !winner)}
-      ]">
+    <div class="bg-gray-800/60 backdrop-blur-sm rounded-lg p-4 md:p-6 mb-4 border border-gray-700/50 shadow-xl">
+      <div class="flex flex-col items-center" :class="{'opacity-70': gameState === 'waiting'}">
         <!-- Player Info with Stats -->
         <div class="mb-4 w-full">
           <div class="flex items-center justify-between gap-4 mb-2">
@@ -148,12 +153,21 @@
         </div>
         
         <!-- Waiting Message -->
-        <div v-if="gameState === 'waiting'" class="text-center mt-4">
-          <div class="bg-yellow-600/20 rounded-lg p-4 animate-pulse">
-            <p class="text-yellow-300 mb-1">Waiting for your partner to join...</p>
-            <p class="text-sm text-gray-300">
+        <div v-if="gameState === 'waiting'" class="text-center mt-4 w-full">
+          <div class="bg-yellow-600/20 rounded-lg p-4 border border-yellow-500/30 shadow-lg animate-pulse">
+            <div class="w-16 h-16 mx-auto mb-3 relative">
+              <div class="absolute inset-0 bg-yellow-500/20 rounded-full animate-ping"></div>
+              <div class="absolute inset-2 bg-yellow-500/30 rounded-full animate-ping animation-delay-300"></div>
+              <div class="absolute inset-4 bg-yellow-500/40 rounded-full animate-ping animation-delay-600"></div>
+              <div class="absolute inset-0 flex items-center justify-center">
+                <span class="text-2xl">👥</span>
+              </div>
+            </div>
+            <p class="text-yellow-300 mb-1 font-medium">Waiting for your partner to join...</p>
+            <p class="text-sm text-gray-300">Game will start automatically</p>
+            <p class="text-sm text-gray-300 mt-2">
               You'll play as
-              <span class="font-bold text-blue-400">X</span>
+              <span class="font-bold text-blue-400">{{ playerSymbol }}</span>
             </p>
           </div>
         </div>
@@ -161,10 +175,10 @@
     </div>
     
     <!-- Sound Controls -->
-    <div class="flex justify-end mb-4">
+    <div class="flex justify-between mb-4">
       <button 
         @click="confirmBackToGames" 
-        class="game-button bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-colors game-interactive"
+        class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
       >
         Back to Games
       </button>
@@ -710,35 +724,34 @@ onMounted(() => {
   // Listen for partner leaving
   socket.value.on('game-partner-left', (data: any) => {
     if (data.from === props.partnerId) {
-      // تغيير حالة اللعبة إلى منتهية
-      gameState.value = 'finished';
+      console.log('Partner left the game');
       
-      // عرض رسالة توضيحية للمستخدم بدلاً من رسالة خطأ
-      const partnerLeftMessage = document.createElement('div');
-      partnerLeftMessage.className = 'fixed top-4 right-4 bg-yellow-600/80 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-      partnerLeftMessage.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span>⚠️</span>
-          <span>Your partner has left the game</span>
-        </div>
+      // Change game state
+      gameState.value = 'waiting';
+      
+      // Create an overlay with partner left message
+      const partnerLeftOverlay = document.createElement('div');
+      partnerLeftOverlay.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-lg';
+      partnerLeftOverlay.innerHTML = `
+        <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center text-3xl mb-4">😢</div>
+        <h3 class="text-lg font-medium text-white mb-2">Partner Left</h3>
+        <p class="text-sm text-gray-300 text-center max-w-xs">
+          Your partner has left the game.<br>
+          Returning to game menu...
+        </p>
       `;
-      document.body.appendChild(partnerLeftMessage);
       
-      // إزالة الرسالة بعد 3 ثوانٍ
+      // Find the game container and append the overlay
+      const gameContainer = document.querySelector('.game-board') || document.body;
+      gameContainer.appendChild(partnerLeftOverlay);
+      
+      // After 2 seconds, return to the games menu
       setTimeout(() => {
-        document.body.removeChild(partnerLeftMessage);
-        // العودة إلى قائمة الألعاب
+        // Remove the overlay
+        gameContainer.removeChild(partnerLeftOverlay);
+        // Return to games menu
         emit('back');
-      }, 3000);
-      
-      // تشغيل صوت إشعار
-      gameSoundEffects.playSound('click');
-      
-      // إلغاء مؤقت التحقق من الاتصال
-      if (connectionLostTimeout.value) {
-        clearTimeout(connectionLostTimeout.value);
-        connectionLostTimeout.value = null;
-      }
+      }, 2000);
     }
   });
   

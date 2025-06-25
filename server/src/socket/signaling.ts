@@ -3,7 +3,7 @@ import { userService } from '../services/userService';
 
 // Rate limiting and timeout constants
 const MIN_RECONNECT_INTERVAL = 500; // زمن الانتظار بين محاولات إعادة الاتصال بالمللي ثانية
-const INACTIVE_CONNECTION_TIMEOUT = 300000; // 5 دقائق لمهلة الاتصال غير النشط
+const INACTIVE_CONNECTION_TIMEOUT = 1800000; // 30 دقيقة لمهلة الاتصال غير النشط
 const MAX_OFFER_RATE = 20; // الحد الأقصى لعدد العروض في الدقيقة
 const MAX_ICE_CANDIDATES = 100; // الحد الأقصى لعدد مرشحات ICE المسموح بها في الدقيقة
 
@@ -30,7 +30,7 @@ export const setupSignalingEvents = (io: Server, socket: Socket) => {
    */
   const checkOfferRateLimit = (userId: string): boolean => {
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const oneAndHalfMinuteAgo = now - 90000; // 1.5 دقيقة بدلاً من دقيقة واحدة
     
     if (!offerRates.has(userId)) {
       offerRates.set(userId, [now]);
@@ -39,7 +39,7 @@ export const setupSignalingEvents = (io: Server, socket: Socket) => {
     
     const userOfferTimes = offerRates.get(userId)!;
     // تنظيف القائمة من القيم القديمة
-    const recentOffers = userOfferTimes.filter(time => time > oneMinuteAgo);
+    const recentOffers = userOfferTimes.filter(time => time > oneAndHalfMinuteAgo);
     offerRates.set(userId, recentOffers);
     
     return recentOffers.length <= MAX_OFFER_RATE;
@@ -50,7 +50,7 @@ export const setupSignalingEvents = (io: Server, socket: Socket) => {
    */
   const checkIceCandidateRateLimit = (userId: string): boolean => {
     const now = Date.now();
-    const oneMinuteAgo = now - 60000;
+    const oneAndHalfMinuteAgo = now - 90000; // 1.5 دقيقة بدلاً من دقيقة واحدة
     
     if (!iceCandidateRates.has(userId)) {
       iceCandidateRates.set(userId, [now]);
@@ -59,7 +59,7 @@ export const setupSignalingEvents = (io: Server, socket: Socket) => {
     
     const userCandidateTimes = iceCandidateRates.get(userId)!;
     // تنظيف القائمة من القيم القديمة
-    const recentCandidates = userCandidateTimes.filter(time => time > oneMinuteAgo);
+    const recentCandidates = userCandidateTimes.filter(time => time > oneAndHalfMinuteAgo);
     iceCandidateRates.set(userId, recentCandidates);
     
     // تحديث القائمة بالوقت الحالي

@@ -431,29 +431,35 @@ onMounted(() => {
   // Listen for partner leaving
   socket.value?.on('game-partner-left', (data: any) => {
     if (data.from === props.partnerId) {
-      // إيقاف العد التنازلي
+      // Stop the countdown
       stopCountdown();
       
-      // تغيير حالة اللعبة
-    gameState.value = 'waiting';
+      // Change game state to a new state for partner left
+      gameState.value = 'waiting';
       
-      // عرض رسالة توضيحية للمستخدم بدلاً من رسالة خطأ
-      const partnerLeftMessage = document.createElement('div');
-      partnerLeftMessage.className = 'fixed top-4 right-4 bg-yellow-600/80 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-      partnerLeftMessage.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span>⚠️</span>
-          <span>Your partner has left the game</span>
-        </div>
+      // Create an overlay with partner left message
+      const partnerLeftOverlay = document.createElement('div');
+      partnerLeftOverlay.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-lg';
+      partnerLeftOverlay.innerHTML = `
+        <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center text-3xl mb-4">😢</div>
+        <h3 class="text-lg font-medium text-white mb-2">Partner Left</h3>
+        <p class="text-sm text-gray-300 text-center max-w-xs">
+          Your partner has left the game.<br>
+          Returning to game menu...
+        </p>
       `;
-      document.body.appendChild(partnerLeftMessage);
       
-      // إزالة الرسالة بعد 3 ثوانٍ
+      // Find the game container and append the overlay
+      const gameContainer = document.querySelector('.game-board') || document.body;
+      gameContainer.appendChild(partnerLeftOverlay);
+      
+      // After 2 seconds, return to the games menu
       setTimeout(() => {
-        document.body.removeChild(partnerLeftMessage);
-        // العودة إلى قائمة الألعاب
-        handleBackToGames();
-      }, 3000);
+        // Remove the overlay
+        gameContainer.removeChild(partnerLeftOverlay);
+        // Return to games menu
+        emit('back');
+      }, 2000);
     }
   });
   

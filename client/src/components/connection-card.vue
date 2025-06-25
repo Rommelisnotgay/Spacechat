@@ -148,7 +148,7 @@ const disconnectTitle = computed(() => {
 const disconnectMessage = computed(() => {
   switch(props.disconnectReason) {
     case 'skip':
-      return 'The conversation has been skipped';
+      return 'The other user skipped this conversation';
     case 'network-disconnect':
       return 'The connection with your partner was lost';
     case 'inactivity':

@@ -101,6 +101,22 @@
       
       <!-- Game View -->
       <div v-else>
+        <!-- Waiting overlay -->
+        <div v-if="waitingForAcceptance" class="absolute inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-lg">
+          <div class="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <h3 class="text-lg font-medium text-white mb-2">Waiting for Response</h3>
+          <p class="text-sm text-gray-300 text-center max-w-xs">
+            Your game invitation has been sent.<br>
+            Please wait for your partner to accept.
+          </p>
+          <button 
+            @click="cancelInvitation" 
+            class="mt-6 px-4 py-2 bg-gray-700 rounded-full hover:bg-gray-600 transition-colors text-sm"
+          >
+            Cancel Invitation
+          </button>
+        </div>
+        
         <TicTacToe
           v-if="selectedGame === 'tic-tac-toe'"
           :partnerId="partnerId"
@@ -162,11 +178,51 @@ const gameRoomId = ref<string | null>(null);
 const partnerReady = ref(false);
 const debugInfo = ref<string>('');
 
+// Add waiting state for invitation acceptance
+const waitingForAcceptance = ref(false);
+const invitationId = ref<string | null>(null);
+const invitationTimeout = ref<number | null>(null);
+const invitationSentTime = ref<number | null>(null);
+
 // Debug helper - only logs to console, not UI
 const logDebugInfo = (msg: string) => {
   console.log(`[Game Debug] ${msg}`);
   debugInfo.value = msg;
 };
+
+// Create a reference to the event handler so we can remove it later
+const gameInvitationAcceptedHandler = ((event: CustomEvent) => {
+  const { gameType, partnerId: gamePartnerId, inviteId } = event.detail;
+  
+  if (gamePartnerId === props.partnerId) {
+    logDebugInfo(`Received invitation acceptance via custom event: ${inviteId}`);
+    
+    // Clear any timeout
+    if (invitationTimeout.value) {
+      clearTimeout(invitationTimeout.value);
+      invitationTimeout.value = null;
+    }
+    
+    // Clear any error messages from previous invitations
+    errorMessage.value = null;
+    
+    // Set the game type if it's not already set
+    if (!selectedGame.value || selectedGame.value !== gameType) {
+      selectedGame.value = gameType;
+    }
+    
+    // Update state to allow gameplay
+    waitingForAcceptance.value = false;
+    partnerReady.value = true;
+    
+    // Create a deterministic room ID if needed
+    if (!gameRoomId.value) {
+      const userIds = [userId.value, props.partnerId].sort();
+      gameRoomId.value = `${gameType}-${userIds[0]}-${userIds[1]}`;
+      logDebugInfo(`Created game room: ${gameRoomId.value}`);
+    }
+  }
+}) as EventListener;
 
 // Select a game
 const selectGame = (gameType: string) => {
@@ -186,6 +242,14 @@ const selectGame = (gameType: string) => {
   
   logDebugInfo(`Created game room: ${gameRoomId.value}`);
   
+  // Set waiting state to block UI until partner accepts
+  waitingForAcceptance.value = true;
+  invitationSentTime.value = Date.now();
+  
+  // Generate a unique invitation ID
+  const inviteId = `invite-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+  invitationId.value = inviteId;
+  
   // Join the game room
   socket.value?.emit('game-join-room', {
     gameType,
@@ -196,9 +260,6 @@ const selectGame = (gameType: string) => {
 
   // Send game invitation to partner
   if (socket.value && props.partnerId) {
-    // Generate a unique invitation ID
-    const inviteId = `invite-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    
     // Send the invitation
     socket.value.emit('game-invite', {
       gameType,
@@ -210,11 +271,36 @@ const selectGame = (gameType: string) => {
     
     // Show a toast or notification that invitation was sent
     showToastMessage(`Invitation sent! Waiting for response...`, 'info');
+    
+    // Set a timeout to cancel the invitation if no response
+    invitationTimeout.value = window.setTimeout(() => {
+      if (waitingForAcceptance.value) {
+        // Partner didn't respond in time
+        waitingForAcceptance.value = false;
+        errorMessage.value = "Your partner didn't respond to the invitation. Please try again.";
+        logDebugInfo("Invitation timed out - no response from partner");
+        
+        // Clear game selection
+        selectedGame.value = null;
+        gameRoomId.value = null;
+        invitationId.value = null;
+      }
+    }, 30000); // 30 seconds timeout (changed from 45 seconds)
   }
 };
 
 // Close game
 const closeGame = () => {
+  // Clear any pending invitation timeout
+  if (invitationTimeout.value) {
+    clearTimeout(invitationTimeout.value);
+    invitationTimeout.value = null;
+  }
+  
+  // Reset waiting state
+  waitingForAcceptance.value = false;
+  invitationId.value = null;
+  
   // Notify partner that we're leaving the game but still in chat
   if (props.partnerId) {
     socket.value?.emit('game-leave-notification', {
@@ -266,9 +352,66 @@ const handleGameError = (error: string) => {
   logDebugInfo(`Error: ${error}`);
 };
 
+// Cancel an ongoing invitation
+const cancelInvitation = () => {
+  // Clear the timeout
+  if (invitationTimeout.value) {
+    clearTimeout(invitationTimeout.value);
+    invitationTimeout.value = null;
+  }
+  
+  // Notify the partner that we've cancelled the invitation
+  if (socket.value && props.partnerId && invitationId.value) {
+    socket.value.emit('game-invite-cancel', {
+      inviteId: invitationId.value,
+      to: props.partnerId,
+      gameType: selectedGame.value
+    });
+    
+    logDebugInfo(`Cancelled invitation: ${invitationId.value}`);
+    
+    // Show a confirmation toast message
+    showToastMessage('Game invitation cancelled', 'info');
+  }
+  
+  // Reset states - important to clear ALL game-related state
+  waitingForAcceptance.value = false;
+  invitationId.value = null;
+  selectedGame.value = null;
+  gameRoomId.value = null;
+  partnerReady.value = false;
+  
+  // If there was a game room created, leave it explicitly
+  if (gameRoomId.value && socket.value && props.partnerId) {
+    socket.value.emit('game-leave-room', {
+      roomId: gameRoomId.value,
+      to: props.partnerId
+    });
+  }
+};
+
 // Set up socket event listeners
 onMounted(() => {
   logDebugInfo('Setting up game events');
+  
+  // Listen for custom game invitation accepted event from HomeView
+  window.addEventListener('game-invitation-accepted', gameInvitationAcceptedHandler);
+  
+  // Add event listener for game error events from parent
+  window.addEventListener('game-error', ((event: CustomEvent) => {
+    const { message, gameType } = event.detail;
+    
+    if (message && gameType === selectedGame.value) {
+      logDebugInfo(`Received game error event: ${message}`);
+      errorMessage.value = message;
+      
+      // Reset game state to prevent issues with future invitations
+      waitingForAcceptance.value = false;
+      invitationId.value = null;
+      
+      // We don't reset selectedGame here to allow the error to be displayed
+    }
+  }) as EventListener);
   
   // Add event listener for direct game selection from notifications
   document.addEventListener('select-game', ((event: CustomEvent) => {
@@ -304,6 +447,88 @@ onMounted(() => {
         to: props.partnerId,
         isFirstPlayer: false
       });
+    }
+  });
+  
+  // Handle invitation responses
+  socket.value?.on('game-invite-accepted', (data: any) => {
+    if (data.from === props.partnerId && waitingForAcceptance.value) {
+      logDebugInfo(`Partner accepted game invitation: ${data.inviteId}`);
+      
+      // Clear any timeout
+      if (invitationTimeout.value) {
+        clearTimeout(invitationTimeout.value);
+        invitationTimeout.value = null;
+      }
+      
+      // Update state to allow gameplay
+      waitingForAcceptance.value = false;
+      partnerReady.value = true;
+      
+      // Show success message
+      showToastMessage('Your partner accepted! Game starting...', 'success');
+    }
+  });
+  
+  socket.value?.on('game-invite-declined', (data: any) => {
+    if (data.from === props.partnerId && waitingForAcceptance.value) {
+      logDebugInfo(`Partner declined game invitation: ${data.inviteId}`);
+      
+      // Clear any timeout
+      if (invitationTimeout.value) {
+        clearTimeout(invitationTimeout.value);
+        invitationTimeout.value = null;
+      }
+      
+      // Reset state and show error
+      waitingForAcceptance.value = false;
+      errorMessage.value = "Your partner declined the game invitation.";
+      
+      // إغلاق اللعبة بالكامل بدلاً من الاحتفاظ بـ selectedGame
+      selectedGame.value = null;
+      gameRoomId.value = null;
+      partnerReady.value = false;
+      
+      // تأكيد أن أي غرفة لعبة قائمة تم مغادرتها
+      if (gameRoomId.value && socket.value && props.partnerId) {
+        socket.value.emit('game-leave-room', {
+          roomId: gameRoomId.value,
+          to: props.partnerId
+        });
+      }
+    }
+  });
+  
+  socket.value?.on('game-invite-timeout', (data: any) => {
+    if (waitingForAcceptance.value && invitationId.value === data.inviteId) {
+      logDebugInfo(`Game invitation timed out: ${data.inviteId}`);
+      
+      // Clear any timeout
+      if (invitationTimeout.value) {
+        clearTimeout(invitationTimeout.value);
+        invitationTimeout.value = null;
+      }
+      
+      // Reset state and show error
+      waitingForAcceptance.value = false;
+      errorMessage.value = "The game invitation expired. Please try again.";
+      selectedGame.value = null;
+      gameRoomId.value = null;
+    }
+  });
+  
+  socket.value?.on('game-invite-cancel', (data: any) => {
+    if (data.from === props.partnerId) {
+      logDebugInfo(`Partner cancelled game invitation: ${data.inviteId}`);
+      
+      // Instead of showing an error message, just reset the game state silently
+      // This allows future invitations to work properly
+      waitingForAcceptance.value = false;
+      invitationId.value = null;
+      gameRoomId.value = null;
+      
+      // Don't set errorMessage here to avoid showing the error screen
+      // Don't reset selectedGame here to allow for a smoother transition if a new invitation is accepted
     }
   });
   
@@ -349,19 +574,51 @@ onMounted(() => {
 
 // Clean up event listeners
 onUnmounted(() => {
-  socket.value?.off('game-room-invite');
-  socket.value?.off('game-partner-joined');
-  socket.value?.off('game-error');
-  socket.value?.off('game-partner-left');
-  socket.value?.off('game-notification');
+  logDebugInfo('Cleaning up game events');
   
-  // Leave any active game room
-  if (gameRoomId.value) {
-    socket.value?.emit('game-leave-room', {
-      roomId: gameRoomId.value,
-      to: props.partnerId
+  // Remove event listeners
+  window.removeEventListener('game-invitation-accepted', gameInvitationAcceptedHandler);
+  window.removeEventListener('game-error', (() => {}) as EventListener);
+  
+  // Clear any pending invitation timeout
+  if (invitationTimeout.value) {
+    clearTimeout(invitationTimeout.value);
+    invitationTimeout.value = null;
+  }
+  
+  // If we were waiting for an invitation response, cancel it
+  if (waitingForAcceptance.value && invitationId.value && socket.value && props.partnerId) {
+    socket.value.emit('game-invite-cancel', {
+      inviteId: invitationId.value,
+      to: props.partnerId,
+      gameType: selectedGame.value
     });
   }
+  
+  // Remove socket event listeners
+  if (socket.value) {
+    socket.value.off('game-room-invite');
+    socket.value.off('game-partner-joined');
+    socket.value.off('game-error');
+    socket.value.off('game-partner-left');
+    socket.value.off('game-notification');
+    socket.value.off('game-invite-accepted');
+    socket.value.off('game-invite-declined');
+    socket.value.off('game-invite-timeout');
+    socket.value.off('game-invite-cancel');
+    
+    // Leave any active game room
+    if (gameRoomId.value && props.partnerId) {
+      socket.value.emit('game-leave-room', {
+        roomId: gameRoomId.value,
+        to: props.partnerId
+      });
+    }
+  }
+  
+  // Reset all states
+  waitingForAcceptance.value = false;
+  invitationId.value = null;
   
   // Remove event listener
   document.removeEventListener('select-game', (() => {}) as EventListener);

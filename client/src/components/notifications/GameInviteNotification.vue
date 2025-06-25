@@ -106,7 +106,14 @@ const onDecline = () => {
   if (timer !== null) {
     clearInterval(timer);
   }
-  emit('decline', { inviteId: props.inviteId, from: props.from });
+  
+  // إرسال حدث رفض الدعوة وإغلاق الإشعار
+  emit('decline', { inviteId: props.inviteId, from: props.from, gameType: props.gameType });
+  
+  // تشغيل صوت النقر
+  const clickSound = new Audio('/sounds/click.mp3');
+  clickSound.volume = 0.3;
+  clickSound.play().catch(err => console.log('Error playing sound', err));
 };
 
 // Helper functions for game type display

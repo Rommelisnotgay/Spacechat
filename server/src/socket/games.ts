@@ -204,6 +204,23 @@ export const setupGameEvents = (io: Server, socket: Socket) => {
         targetSocket.data.partnerId = socket.data.userId;
       }
       
+      // Clean up any existing game rooms between these users to prevent conflicts
+      const userIds = [socket.data.userId, data.to].sort();
+      const potentialRoomIds = [
+        `tic-tac-toe-${userIds[0]}-${userIds[1]}`,
+        `rock-paper-scissors-${userIds[0]}-${userIds[1]}`,
+        `word-galaxy-${userIds[0]}-${userIds[1]}`
+      ];
+      
+      // Check and destroy any existing rooms
+      potentialRoomIds.forEach(roomId => {
+        const existingGame = gameController.getGameByRoom(roomId);
+        if (existingGame) {
+          console.log(`Cleaning up existing game room ${roomId} before creating a new one`);
+          gameController.destroyGameRoom(roomId);
+        }
+      });
+      
       // Forward acceptance to partner
       io.to(targetUserInfo.socketId).emit('game-invite-accepted', {
         gameType: data.gameType,
@@ -895,6 +912,43 @@ export const setupGameEvents = (io: Server, socket: Socket) => {
       }
     } catch (error) {
       console.error('Error in game-pong:', error);
+    }
+  });
+
+  /**
+   * Handle game invitation cancellation
+   */
+  socket.on('game-invite-cancel', (data: { to: string; inviteId: string; gameType: string }) => {
+    try {
+      const targetUserInfo = userService.getUserInfo(data.to);
+      
+      if (!targetUserInfo) {
+        // Target is not connected, no need to forward the cancellation
+        return;
+      }
+      
+      // Forward cancellation to partner with all necessary data
+      io.to(targetUserInfo.socketId).emit('game-invite-cancel', {
+        from: socket.data.userId,
+        inviteId: data.inviteId,
+        gameType: data.gameType
+      });
+      
+      // Remove any pending game state associated with this invitation
+      // This ensures that when a new invitation is sent, there's no conflict
+      const userIds = [socket.data.userId, data.to].sort();
+      const potentialRoomId = `${data.gameType}-${userIds[0]}-${userIds[1]}`;
+      
+      // Clean up any existing game room with this ID
+      const existingGame = gameController.getGameByRoom(potentialRoomId);
+      if (existingGame) {
+        gameController.destroyGameRoom(potentialRoomId);
+        console.log(`Cleaned up game room ${potentialRoomId} after invitation cancellation`);
+      }
+      
+      console.log(`Game invite cancelled: ${socket.data.userId} cancelled invitation ${data.inviteId} to ${data.to}`);
+    } catch (error) {
+      console.error('Error in game-invite-cancel:', error);
     }
   });
 };

@@ -13,7 +13,22 @@
           'bg-blue-600/40 border border-blue-500/30': gameState === 'guessing',
           'bg-purple-600/40 border border-purple-500/30': gameState === 'complete'
         }">
-        {{ gameStateLabel }}
+        <span v-if="gameState === 'waiting'" class="text-yellow-300 animate-pulse flex items-center">
+          <span class="inline-block w-2 h-2 bg-yellow-400 rounded-full mr-2 animate-ping"></span>
+          Waiting...
+        </span>
+        <span v-else-if="gameState === 'setup'" class="flex items-center">
+          <span class="inline-block w-2 h-2 bg-green-400 rounded-full mr-2"></span>
+          Setup
+        </span>
+        <span v-else-if="gameState === 'guessing'" class="flex items-center">
+          <span class="inline-block w-2 h-2 bg-blue-400 rounded-full mr-2"></span>
+          Guessing
+        </span>
+        <span v-else-if="gameState === 'complete'" class="flex items-center">
+          <span class="inline-block w-2 h-2 bg-purple-400 rounded-full mr-2"></span>
+          Complete
+        </span>
       </div>
     </div>
     
@@ -42,8 +57,24 @@
         
         <!-- Game Area -->
         <div class="w-full mb-4">
+          <!-- Waiting for Partner Message -->
+          <div v-if="gameState === 'waiting'" class="text-center animate__animated animate__fadeIn">
+            <div class="bg-yellow-600/20 rounded-lg p-4 border border-yellow-500/30 shadow-lg animate-pulse">
+              <div class="w-16 h-16 mx-auto mb-3 relative">
+                <div class="absolute inset-0 bg-yellow-500/20 rounded-full animate-ping"></div>
+                <div class="absolute inset-2 bg-yellow-500/30 rounded-full animate-ping animation-delay-300"></div>
+                <div class="absolute inset-4 bg-yellow-500/40 rounded-full animate-ping animation-delay-600"></div>
+                <div class="absolute inset-0 flex items-center justify-center">
+                  <span class="text-2xl">👥</span>
+                </div>
+              </div>
+              <p class="text-yellow-300 mb-1 font-medium">Waiting for your partner to join...</p>
+              <p class="text-sm text-gray-300">Game will start automatically</p>
+            </div>
+          </div>
+          
           <!-- Word Setup (Word Creator) -->
-          <div v-if="gameState === 'setup' && isWordCreator" class="animate__animated animate__fadeIn">
+          <div v-else-if="gameState === 'setup' && isWordCreator" class="animate__animated animate__fadeIn">
             <div class="text-center mb-6">
               <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center bg-green-500/30 rounded-full">
                 <span class="text-2xl">💬</span>
@@ -113,6 +144,7 @@
               <div class="w-16 h-16 mx-auto mb-3 relative">
                 <div class="absolute inset-0 bg-blue-500/20 rounded-full animate-ping"></div>
                 <div class="absolute inset-2 bg-blue-500/30 rounded-full animate-ping animation-delay-300"></div>
+                <div class="absolute inset-4 bg-blue-500/40 rounded-full animate-ping animation-delay-600"></div>
                 <div class="absolute inset-0 flex items-center justify-center">
                   <span class="text-2xl">🔤</span>
                 </div>
@@ -238,63 +270,51 @@
           <!-- Game Complete View -->
           <div v-else-if="gameState === 'complete'" class="animate__animated animate__fadeIn">
             <div class="text-center mb-6">
-              <div class="w-20 h-20 mx-auto mb-4 flex items-center justify-center bg-purple-500/30 rounded-full">
-                <span class="text-3xl">{{ isWinner ? '🎉' : '🔍' }}</span>
+              <div class="w-16 h-16 mx-auto mb-3 flex items-center justify-center rounded-full"
+                :class="gameResult === 'win' ? 'bg-green-500/30' : 'bg-red-500/30'">
+                <span class="text-3xl">{{ gameResult === 'win' ? '🎉' : '😢' }}</span>
               </div>
-              
-              <h3 class="text-2xl font-bold text-white mb-2">
-                {{ isWinner ? 'You Won!' : 'You Lost!' }}
+              <h3 class="text-xl font-bold mb-2" :class="gameResult === 'win' ? 'text-green-400' : 'text-red-400'">
+                {{ isWordCreator 
+                  ? (gameResult === 'win' ? 'Your word was too hard!' : 'Your word was guessed!') 
+                  : (gameResult === 'win' ? 'You guessed it!' : 'You ran out of attempts!') 
+                }}
               </h3>
-              
-              <div class="bg-gray-700/50 rounded-lg p-4 mb-4">
-                <p class="text-gray-300 mb-2">The secret word was:</p>
-                <div class="text-2xl font-bold text-purple-400 mb-2" dir="rtl">{{ secretWord }}</div>
+              <p class="text-gray-300 mb-4">
+                {{ isWordCreator 
+                  ? 'Your partner failed to guess your word.' 
+                  : `The word was: ${secretWord.value}` 
+                }}
+              </p>
+            </div>
+            
+            <div class="bg-gray-700/50 rounded-lg p-4 mb-6">
+              <h4 class="font-bold text-white mb-2">Game Summary:</h4>
+              <div class="grid grid-cols-2 gap-2 text-sm">
+                <div class="text-gray-300">Secret Word:</div>
+                <div class="text-white font-medium">{{ secretWord.value }}</div>
                 
-                <p v-if="isWinner" class="text-green-400 mt-4">
-                  {{ isWordCreator ? 'Your partner couldn\'t solve it!' : 'Solved in ' + attemptCount + ' attempts!' }}
-                </p>
-                <p v-else class="text-yellow-400 mt-4">
-                  {{ isWordCreator ? 'Your partner solved it!' : 'Better luck next time!' }}
-                </p>
+                <div class="text-gray-300">Difficulty:</div>
+                <div class="text-white font-medium capitalize">{{ difficulty }}</div>
+                
+                <div class="text-gray-300">Attempts Used:</div>
+                <div class="text-white font-medium">{{ attemptCount }}/{{ maxAttempts }}</div>
+                
+                <div class="text-gray-300">Time Spent:</div>
+                <div class="text-white font-medium">{{ formatTime(gameTime) }}</div>
               </div>
-              
-              <div class="bg-gray-700/50 rounded-lg p-4 mb-4">
-                <h4 class="text-lg font-bold text-white mb-2">Scores</h4>
-                <div class="flex justify-between items-center">
-                  <div>
-                    <p class="text-gray-300">You:</p>
-                    <p class="text-xl font-bold text-green-400">{{ isWordCreator ? creatorScore : guesserScore }}</p>
-                  </div>
-                  <div>
-                    <p class="text-gray-300">Partner:</p>
-                    <p class="text-xl font-bold text-blue-400">{{ isWordCreator ? guesserScore : creatorScore }}</p>
-                  </div>
-                </div>
-                <p class="text-xs text-gray-400 mt-2">Points are saved until you exit the game</p>
-              </div>
-              
+            </div>
+            
+            <div class="text-center">
               <button 
                 @click="playAgain" 
                 class="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-all shadow-lg hover:shadow-xl transform hover:scale-105 active:scale-95"
               >
                 Play Again
               </button>
-            </div>
-          </div>
-          
-          <!-- Waiting for Partner -->
-          <div v-else-if="gameState === 'waiting'" class="text-center">
-            <div class="bg-yellow-600/20 rounded-lg p-4 border border-yellow-500/30 shadow-lg animate-pulse">
-              <div class="w-16 h-16 mx-auto mb-3 relative">
-                <div class="absolute inset-0 bg-yellow-500/20 rounded-full animate-ping"></div>
-                <div class="absolute inset-2 bg-yellow-500/30 rounded-full animate-ping animation-delay-300"></div>
-                <div class="absolute inset-4 bg-yellow-500/40 rounded-full animate-ping animation-delay-600"></div>
-                <div class="absolute inset-0 flex items-center justify-center">
-                  <span class="text-2xl">👥</span>
-                </div>
-              </div>
-              <p class="text-yellow-300 mb-1 font-medium">Waiting for your partner to join...</p>
-              <p class="text-sm text-gray-300">Game will start automatically</p>
+              <p class="text-sm text-gray-400 mt-2">
+                In the next round, roles will be swapped
+              </p>
             </div>
           </div>
         </div>
@@ -302,9 +322,9 @@
     </div>
     
     <!-- Game Controls -->
-    <div class="flex justify-between">
+    <div class="flex justify-between mb-4">
       <button 
-        @click="leaveGame" 
+        @click="confirmBackToGames" 
         class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-md hover:shadow-lg transform hover:scale-105 active:scale-95"
       >
         Back to Games
@@ -315,22 +335,22 @@
   <!-- Confirmation Dialog -->
   <div v-if="showConfirmation" class="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
     <div class="bg-gray-800 p-4 rounded-lg max-w-xs w-full text-center">
-      <h3 class="text-lg font-semibold mb-3 text-white">{{ isArabicWord(secretWord) ? 'هل أنت متأكد؟' : 'Are you sure?' }}</h3>
+      <h3 class="text-lg font-semibold mb-3 text-white">Are you sure?</h3>
       <p class="text-sm text-gray-300 mb-4">
-        {{ isArabicWord(secretWord) ? 'مغادرة اللعبة ستنهيها لشريكك أيضًا.' : 'Leaving the game will end it for your partner too.' }}
+        Leaving the game will end it for your partner too.
       </p>
       <div class="flex justify-center gap-3">
         <button 
           @click="showConfirmation = false" 
           class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
         >
-          {{ isArabicWord(secretWord) ? 'إلغاء' : 'Cancel' }}
+          Cancel
         </button>
         <button 
-          @click="confirmExit" 
+          @click="leaveGame" 
           class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-sm"
         >
-          {{ isArabicWord(secretWord) ? 'مغادرة' : 'Leave' }}
+          Leave
         </button>
       </div>
     </div>
@@ -858,19 +878,6 @@ const leaveGame = () => {
   gameSoundEffects.playSound('button');
 };
 
-const confirmExit = () => {
-  showConfirmation.value = false;
-  
-  // Send a notification to partner that we're leaving the game
-  socket.value?.emit('game-leave', {
-    gameType: 'word-galaxy',
-    to: props.partnerId
-  });
-  
-  // Return to game selection
-  emit('back');
-};
-
 // Toggle sound mute/unmute
 const toggleSound = () => {
   isSoundMuted.value = gameSoundEffects.toggleMute();
@@ -987,30 +994,39 @@ onMounted(() => {
     }
   });
   
-  // Handle partner leaving
-  socket.value?.on('game-partner-left', () => {
-    gameState.value = 'waiting';
-    stopTimer();
-    
-    // Play notification sound
-    gameSoundEffects.playSound('notification');
-    
-    // Create a notification banner at the top of the page
-    const partnerLeftMessage = document.createElement('div');
-    partnerLeftMessage.className = 'fixed top-4 right-4 bg-yellow-600/80 text-white px-4 py-2 rounded-lg shadow-lg z-50';
-    partnerLeftMessage.innerHTML = `
-      <div class="flex items-center gap-2">
-        <span>⚠️</span>
-        <span>Your partner has left the game</span>
-      </div>
-    `;
-    document.body.appendChild(partnerLeftMessage);
-    
-    // Remove the notification after 3 seconds and return to games menu
-    setTimeout(() => {
-      document.body.removeChild(partnerLeftMessage);
-      emit('back');
-    }, 3000);
+  // Listen for partner leaving
+  socket.value?.on('game-partner-left', (data: any) => {
+    if (data.from === props.partnerId) {
+      console.log('Partner left the game');
+      
+      // Reset game state
+      resetLocalGameState();
+      gameState.value = 'waiting';
+      
+      // Create an overlay with partner left message
+      const partnerLeftOverlay = document.createElement('div');
+      partnerLeftOverlay.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center rounded-lg';
+      partnerLeftOverlay.innerHTML = `
+        <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center text-3xl mb-4">😢</div>
+        <h3 class="text-lg font-medium text-white mb-2">Partner Left</h3>
+        <p class="text-sm text-gray-300 text-center max-w-xs">
+          Your partner has left the game.<br>
+          Returning to game menu...
+        </p>
+      `;
+      
+      // Find the game container and append the overlay
+      const gameContainer = document.querySelector('.game-board') || document.body;
+      gameContainer.appendChild(partnerLeftOverlay);
+      
+      // After 2 seconds, return to the games menu
+      setTimeout(() => {
+        // Remove the overlay
+        gameContainer.removeChild(partnerLeftOverlay);
+        // Return to games menu
+        emit('back');
+      }, 2000);
+    }
   });
   
   // Handle game reset
@@ -1097,6 +1113,14 @@ const gameResult = computed(() => {
     return isWinner.value ? 'guessed' : 'failed';
   }
 });
+
+// New function to handle "Back to Games" button
+const confirmBackToGames = () => {
+  showConfirmation.value = true;
+  
+  // Play button sound
+  gameSoundEffects.playSound('button');
+};
 </script>
 
 <style scoped>
